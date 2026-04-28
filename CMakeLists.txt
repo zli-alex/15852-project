@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(dgcolor VERSION 0.1.0 LANGUAGES CXX)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -51,6 +53,7 @@ foreach(_candidate IN LISTS _parlay_candidates)
 endforeach()
 
 add_library(dgcolor_parlay INTERFACE)
+target_link_libraries(dgcolor_parlay INTERFACE Threads::Threads)
 if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
   message(STATUS "ParlayLib include directory found at: ${DGCOLOR_PARLAY_INCLUDE_DIR}")
   target_include_directories(dgcolor_parlay INTERFACE "${DGCOLOR_PARLAY_INCLUDE_DIR}")
