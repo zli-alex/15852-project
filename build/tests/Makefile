@@ -154,6 +154,58 @@ test_types_batch/fast:
 	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_types_batch.dir/build.make tests/CMakeFiles/test_types_batch.dir/build
 .PHONY : test_types_batch/fast
 
+# Convenience name for target.
+tests/CMakeFiles/test_interfaces_compile.dir/rule:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/test_interfaces_compile.dir/rule
+.PHONY : tests/CMakeFiles/test_interfaces_compile.dir/rule
+
+# Convenience name for target.
+test_interfaces_compile: tests/CMakeFiles/test_interfaces_compile.dir/rule
+.PHONY : test_interfaces_compile
+
+# fast build rule for target.
+test_interfaces_compile/fast:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/build
+.PHONY : test_interfaces_compile/fast
+
+# Convenience name for target.
+tests/CMakeFiles/test_graph_store.dir/rule:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/test_graph_store.dir/rule
+.PHONY : tests/CMakeFiles/test_graph_store.dir/rule
+
+# Convenience name for target.
+test_graph_store: tests/CMakeFiles/test_graph_store.dir/rule
+.PHONY : test_graph_store
+
+# fast build rule for target.
+test_graph_store/fast:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/build
+.PHONY : test_graph_store/fast
+
+__/src/graph_store.o: __/src/graph_store.cpp.o
+.PHONY : __/src/graph_store.o
+
+# target to build an object file
+__/src/graph_store.cpp.o:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/__/src/graph_store.cpp.o
+.PHONY : __/src/graph_store.cpp.o
+
+__/src/graph_store.i: __/src/graph_store.cpp.i
+.PHONY : __/src/graph_store.i
+
+# target to preprocess a source file
+__/src/graph_store.cpp.i:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/__/src/graph_store.cpp.i
+.PHONY : __/src/graph_store.cpp.i
+
+__/src/graph_store.s: __/src/graph_store.cpp.s
+.PHONY : __/src/graph_store.s
+
+# target to generate assembly for a file
+__/src/graph_store.cpp.s:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/__/src/graph_store.cpp.s
+.PHONY : __/src/graph_store.cpp.s
+
 test_foundation_placeholder.o: test_foundation_placeholder.cpp.o
 .PHONY : test_foundation_placeholder.o
 
@@ -177,6 +229,54 @@ test_foundation_placeholder.s: test_foundation_placeholder.cpp.s
 test_foundation_placeholder.cpp.s:
 	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_foundation_placeholder.dir/build.make tests/CMakeFiles/test_foundation_placeholder.dir/test_foundation_placeholder.cpp.s
 .PHONY : test_foundation_placeholder.cpp.s
+
+test_graph_store.o: test_graph_store.cpp.o
+.PHONY : test_graph_store.o
+
+# target to build an object file
+test_graph_store.cpp.o:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/test_graph_store.cpp.o
+.PHONY : test_graph_store.cpp.o
+
+test_graph_store.i: test_graph_store.cpp.i
+.PHONY : test_graph_store.i
+
+# target to preprocess a source file
+test_graph_store.cpp.i:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/test_graph_store.cpp.i
+.PHONY : test_graph_store.cpp.i
+
+test_graph_store.s: test_graph_store.cpp.s
+.PHONY : test_graph_store.s
+
+# target to generate assembly for a file
+test_graph_store.cpp.s:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/test_graph_store.cpp.s
+.PHONY : test_graph_store.cpp.s
+
+test_interfaces_compile.o: test_interfaces_compile.cpp.o
+.PHONY : test_interfaces_compile.o
+
+# target to build an object file
+test_interfaces_compile.cpp.o:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/test_interfaces_compile.cpp.o
+.PHONY : test_interfaces_compile.cpp.o
+
+test_interfaces_compile.i: test_interfaces_compile.cpp.i
+.PHONY : test_interfaces_compile.i
+
+# target to preprocess a source file
+test_interfaces_compile.cpp.i:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/test_interfaces_compile.cpp.i
+.PHONY : test_interfaces_compile.cpp.i
+
+test_interfaces_compile.s: test_interfaces_compile.cpp.s
+.PHONY : test_interfaces_compile.s
+
+# target to generate assembly for a file
+test_interfaces_compile.cpp.s:
+	cd /Users/zhengfeili/2026_Spring/15852/project/15852-project/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/test_interfaces_compile.cpp.s
+.PHONY : test_interfaces_compile.cpp.s
 
 test_types_batch.o: test_types_batch.cpp.o
 .PHONY : test_types_batch.o
@@ -212,10 +312,21 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... test"
 	@echo "... test_foundation_placeholder"
+	@echo "... test_graph_store"
+	@echo "... test_interfaces_compile"
 	@echo "... test_types_batch"
+	@echo "... __/src/graph_store.o"
+	@echo "... __/src/graph_store.i"
+	@echo "... __/src/graph_store.s"
 	@echo "... test_foundation_placeholder.o"
 	@echo "... test_foundation_placeholder.i"
 	@echo "... test_foundation_placeholder.s"
+	@echo "... test_graph_store.o"
+	@echo "... test_graph_store.i"
+	@echo "... test_graph_store.s"
+	@echo "... test_interfaces_compile.o"
+	@echo "... test_interfaces_compile.i"
+	@echo "... test_interfaces_compile.s"
 	@echo "... test_types_batch.o"
 	@echo "... test_types_batch.i"
 	@echo "... test_types_batch.s"

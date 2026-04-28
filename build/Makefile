@@ -153,6 +153,32 @@ test_types_batch/fast:
 .PHONY : test_types_batch/fast
 
 #=============================================================================
+# Target rules for targets named test_interfaces_compile
+
+# Build rule for target.
+test_interfaces_compile: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_interfaces_compile
+.PHONY : test_interfaces_compile
+
+# fast build rule for target.
+test_interfaces_compile/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/build
+.PHONY : test_interfaces_compile/fast
+
+#=============================================================================
+# Target rules for targets named test_graph_store
+
+# Build rule for target.
+test_graph_store: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_graph_store
+.PHONY : test_graph_store
+
+# fast build rule for target.
+test_graph_store/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/build
+.PHONY : test_graph_store/fast
+
+#=============================================================================
 # Target rules for targets named bench_smoke
 
 # Build rule for target.
@@ -176,6 +202,8 @@ help:
 	@echo "... test"
 	@echo "... bench_smoke"
 	@echo "... test_foundation_placeholder"
+	@echo "... test_graph_store"
+	@echo "... test_interfaces_compile"
 	@echo "... test_types_batch"
 .PHONY : help
 

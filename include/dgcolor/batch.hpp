@@ -53,6 +53,12 @@ struct UpdateResult {
   std::string message{};
 };
 
+struct BatchApplyResult {
+  UpdateStatus status{UpdateStatus::Ok};
+  std::string message{};
+  std::size_t updates_applied{0};
+};
+
 struct UpdateStats {
   bool applied{false};
   std::size_t edges_changed{0};

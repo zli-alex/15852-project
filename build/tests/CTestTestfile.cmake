@@ -8,3 +8,7 @@ add_test(foundation_placeholder "/Users/zhengfeili/2026_Spring/15852/project/158
 set_tests_properties(foundation_placeholder PROPERTIES  _BACKTRACE_TRIPLES "/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;11;add_test;/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;0;")
 add_test(types_batch "/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/test_types_batch")
 set_tests_properties(types_batch PROPERTIES  _BACKTRACE_TRIPLES "/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;27;add_test;/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;0;")
+add_test(interfaces_compile "/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/test_interfaces_compile")
+set_tests_properties(interfaces_compile PROPERTIES  _BACKTRACE_TRIPLES "/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;42;add_test;/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;0;")
+add_test(graph_store "/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/test_graph_store")
+set_tests_properties(graph_store PROPERTIES  _BACKTRACE_TRIPLES "/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;58;add_test;/Users/zhengfeili/2026_Spring/15852/project/15852-project/tests/CMakeLists.txt;0;")

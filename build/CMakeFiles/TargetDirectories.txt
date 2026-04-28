@@ -3,6 +3,8 @@
 /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles/rebuild_cache.dir
 /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test_foundation_placeholder.dir
 /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test_types_batch.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test_interfaces_compile.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test_graph_store.dir
 /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test.dir
 /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/edit_cache.dir
 /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/rebuild_cache.dir

@@ -98,6 +98,8 @@ benchmarks/clean: benchmarks/CMakeFiles/bench_smoke.dir/clean
 # Recursive "all" directory target.
 tests/all: tests/CMakeFiles/test_foundation_placeholder.dir/all
 tests/all: tests/CMakeFiles/test_types_batch.dir/all
+tests/all: tests/CMakeFiles/test_interfaces_compile.dir/all
+tests/all: tests/CMakeFiles/test_graph_store.dir/all
 .PHONY : tests/all
 
 # Recursive "preinstall" directory target.
@@ -107,6 +109,8 @@ tests/preinstall:
 # Recursive "clean" directory target.
 tests/clean: tests/CMakeFiles/test_foundation_placeholder.dir/clean
 tests/clean: tests/CMakeFiles/test_types_batch.dir/clean
+tests/clean: tests/CMakeFiles/test_interfaces_compile.dir/clean
+tests/clean: tests/CMakeFiles/test_graph_store.dir/clean
 .PHONY : tests/clean
 
 #=============================================================================
@@ -142,7 +146,7 @@ tests/CMakeFiles/test_foundation_placeholder.dir/clean:
 tests/CMakeFiles/test_types_batch.dir/all:
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_types_batch.dir/build.make tests/CMakeFiles/test_types_batch.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_types_batch.dir/build.make tests/CMakeFiles/test_types_batch.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles --progress-num=5,6 "Built target test_types_batch"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles --progress-num=10,11 "Built target test_types_batch"
 .PHONY : tests/CMakeFiles/test_types_batch.dir/all
 
 # Build rule for subdir invocation for target.
@@ -160,6 +164,58 @@ test_types_batch: tests/CMakeFiles/test_types_batch.dir/rule
 tests/CMakeFiles/test_types_batch.dir/clean:
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_types_batch.dir/build.make tests/CMakeFiles/test_types_batch.dir/clean
 .PHONY : tests/CMakeFiles/test_types_batch.dir/clean
+
+#=============================================================================
+# Target rules for target tests/CMakeFiles/test_interfaces_compile.dir
+
+# All Build rule for target.
+tests/CMakeFiles/test_interfaces_compile.dir/all:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/depend
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles --progress-num=8,9 "Built target test_interfaces_compile"
+.PHONY : tests/CMakeFiles/test_interfaces_compile.dir/all
+
+# Build rule for subdir invocation for target.
+tests/CMakeFiles/test_interfaces_compile.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/test_interfaces_compile.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles 0
+.PHONY : tests/CMakeFiles/test_interfaces_compile.dir/rule
+
+# Convenience name for target.
+test_interfaces_compile: tests/CMakeFiles/test_interfaces_compile.dir/rule
+.PHONY : test_interfaces_compile
+
+# clean rule for target.
+tests/CMakeFiles/test_interfaces_compile.dir/clean:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_interfaces_compile.dir/build.make tests/CMakeFiles/test_interfaces_compile.dir/clean
+.PHONY : tests/CMakeFiles/test_interfaces_compile.dir/clean
+
+#=============================================================================
+# Target rules for target tests/CMakeFiles/test_graph_store.dir
+
+# All Build rule for target.
+tests/CMakeFiles/test_graph_store.dir/all:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/depend
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles --progress-num=5,6,7 "Built target test_graph_store"
+.PHONY : tests/CMakeFiles/test_graph_store.dir/all
+
+# Build rule for subdir invocation for target.
+tests/CMakeFiles/test_graph_store.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles 3
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/test_graph_store.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles 0
+.PHONY : tests/CMakeFiles/test_graph_store.dir/rule
+
+# Convenience name for target.
+test_graph_store: tests/CMakeFiles/test_graph_store.dir/rule
+.PHONY : test_graph_store
+
+# clean rule for target.
+tests/CMakeFiles/test_graph_store.dir/clean:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/test_graph_store.dir/build.make tests/CMakeFiles/test_graph_store.dir/clean
+.PHONY : tests/CMakeFiles/test_graph_store.dir/clean
 
 #=============================================================================
 # Target rules for target benchmarks/CMakeFiles/bench_smoke.dir
