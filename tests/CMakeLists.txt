@@ -10,7 +10,7 @@ target_link_libraries(test_foundation_placeholder
 
 add_test(
   NAME foundation_placeholder
-  COMMAND test_foundation_placeholder
+  COMMAND $<TARGET_FILE:test_foundation_placeholder>
 )
 
 if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
@@ -26,7 +26,7 @@ if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
 
   add_test(
     NAME types_batch
-    COMMAND test_types_batch
+    COMMAND $<TARGET_FILE:test_types_batch>
   )
 
   add_executable(test_interfaces_compile
@@ -41,7 +41,7 @@ if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
 
   add_test(
     NAME interfaces_compile
-    COMMAND test_interfaces_compile
+    COMMAND $<TARGET_FILE:test_interfaces_compile>
   )
 
   add_executable(test_graph_store
@@ -57,7 +57,7 @@ if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
 
   add_test(
     NAME graph_store
-    COMMAND test_graph_store
+    COMMAND $<TARGET_FILE:test_graph_store>
   )
 else()
   message(WARNING "Skipping Parlay-dependent tests (test_types_batch, test_interfaces_compile, test_graph_store) because ParlayLib was not found.")
