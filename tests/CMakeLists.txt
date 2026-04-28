@@ -92,6 +92,24 @@ if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
     NAME validator
     COMMAND $<TARGET_FILE:test_validator>
   )
+
+  add_executable(test_seq_baseline
+    test_seq_baseline.cpp
+    ../src/graph_store.cpp
+    ../src/validator.cpp
+    ../src/seq_baseline_engine.cpp
+  )
+
+  target_link_libraries(test_seq_baseline
+    PRIVATE
+      dgcolor_project_options
+      dgcolor_parlay
+  )
+
+  add_test(
+    NAME seq_baseline
+    COMMAND $<TARGET_FILE:test_seq_baseline>
+  )
 else()
-  message(WARNING "Skipping Parlay-dependent tests (test_types_batch, test_interfaces_compile, test_graph_store, test_validator) because ParlayLib was not found.")
+  message(WARNING "Skipping Parlay-dependent tests (test_types_batch, test_interfaces_compile, test_graph_store, test_validator, test_seq_baseline) because ParlayLib was not found.")
 endif()

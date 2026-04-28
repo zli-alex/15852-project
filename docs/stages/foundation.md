@@ -316,3 +316,114 @@ Foundation is complete when:
 - Benchmark smoke target builds, runs, logs its seed, and emits the required metrics.
 - No coloring algorithm logic has been added.
 - The post-stage summary lists touched files, tests run, and any remaining risks.
+
+## Completion Summary
+
+Foundation stage implementation is complete for shared infrastructure, correctness checks, and smoke benchmarking. No coloring algorithm logic has been implemented.
+
+### Current Repository Structure
+
+```text
+.
+├── CMakeLists.txt
+├── README.md
+├── .gitignore
+├── .gitmodules
+├── external/
+│   └── parlaylib/            # git submodule
+├── include/
+│   └── dgcolor/
+│       ├── batch.hpp
+│       ├── coloring_engine.hpp
+│       ├── graph_store.hpp
+│       ├── rng.hpp
+│       ├── types.hpp
+│       └── validator.hpp
+├── src/
+│   ├── graph_store.cpp
+│   ├── rng.cpp
+│   └── validator.cpp
+├── tests/
+│   ├── CMakeLists.txt
+│   ├── test_foundation_placeholder.cpp
+│   ├── test_rng.cpp
+│   ├── test_types_batch.cpp
+│   ├── test_interfaces_compile.cpp
+│   ├── test_graph_store.cpp
+│   └── test_validator.cpp
+└── benchmarks/
+    ├── CMakeLists.txt
+    └── bench_smoke.cpp
+```
+
+### Implemented in Foundation
+
+- Build system with C++17 configuration and test/benchmark options.
+- ParlayLib discovery via:
+  - `PARLAYLIB_DIR`, or
+  - `external/parlaylib` submodule path.
+- Shared types and update/batch types:
+  - vertex/color/level/timestamp/degree typedefs.
+  - normalized undirected edge helpers and update status helpers.
+- Shared interfaces:
+  - `GraphStore`
+  - `AdjacencyGraphStore` (clarity-first implementation)
+  - `ColoringEngine` contract surface (interface only)
+- GraphStore behavior:
+  - fixed `delta_cap` per instance.
+  - rejects invalid vertices, loops, duplicate inserts, missing deletes, and degree-cap violations.
+  - single-update rejection is non-mutating.
+  - batch validation is phase-separated and atomic.
+  - conservative batch conflict rule: duplicate undirected edge in a batch is rejected.
+- Slow/debug validators:
+  - graph structural invariant checks.
+  - exact coloring validity checks.
+- Deterministic RNG wrapper with explicit seed and seed-format helper.
+- Foundation smoke benchmark:
+  - deterministic seed-driven random insert/delete attempts.
+  - single-update and batch modes.
+  - graph invariant validation at end.
+  - line-oriented `key=value` metrics.
+  - current engine tag: `engine_name=graph_store_only`.
+
+### Intentionally Deferred to Later Stages
+
+- SEQ-Exact algorithm implementation.
+- PAR-Relaxed algorithm implementation.
+- PAR-Exact algorithm implementation.
+- Coloring engine implementations and coloring update logic.
+- Final experiment harness and richer workload generators.
+- Performance-oriented data structure optimizations.
+
+### Linux Validation Results
+
+Validated commands:
+
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Observed test result:
+
+- `100% tests passed, 0 tests failed out of 6`
+- Passing tests:
+  - `foundation_placeholder`
+  - `rng`
+  - `types_batch`
+  - `interfaces_compile`
+  - `graph_store`
+  - `validator`
+
+Smoke benchmark validation summary:
+
+- Same-seed repeated runs produced identical discrete outcomes.
+- Different seeds produced different but valid outcomes.
+- Every smoke run ended with `graph_validated=1`.
+- With conservative Foundation batch semantics, random runs at `batch_size=4/8/16` can reject many or all updates; this is expected.
+- Full build and full CTest passed on Linux.
+
+### Environment Note: Local macOS SDK/Toolchain
+
+Separate from project logic, local macOS environments may fail to compile due to missing C++ standard headers (for example `<cassert>` or `<chrono>`). Treat this as an environment/toolchain issue rather than a repository correctness issue.
