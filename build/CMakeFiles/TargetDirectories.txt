@@ -1,0 +1,12 @@
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles/test.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles/edit_cache.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/CMakeFiles/rebuild_cache.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test_foundation_placeholder.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test_types_batch.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/test.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/edit_cache.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/tests/CMakeFiles/rebuild_cache.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/benchmarks/CMakeFiles/bench_smoke.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/benchmarks/CMakeFiles/test.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/benchmarks/CMakeFiles/edit_cache.dir
+/Users/zhengfeili/2026_Spring/15852/project/15852-project/build/benchmarks/CMakeFiles/rebuild_cache.dir
