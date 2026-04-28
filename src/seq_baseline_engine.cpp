@@ -1,7 +1,10 @@
 #include "dgcolor/seq_baseline_engine.hpp"
 
+#include <chrono>
 #include <stdexcept>
 #include <vector>
+
+#include "dgcolor/validator.hpp"
 
 namespace dgcolor {
 
@@ -42,14 +45,41 @@ parlay::sequence<Color> SeqBaselineEngine::colors() const {
 
 void SeqBaselineEngine::initialize_coloring() {
   recolor_all_greedy();
+  initialized_ = true;
 }
 
-UpdateStats SeqBaselineEngine::apply_update(const EdgeUpdate&) {
-  throw std::logic_error("SeqBaselineEngine::apply_update is not implemented in Step 1");
+UpdateStats SeqBaselineEngine::apply_update(const EdgeUpdate& update) {
+  if (!initialized_) {
+    throw std::logic_error(
+        "SeqBaselineEngine::apply_update requires initialize_coloring() first");
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  const UpdateResult result = graph_.apply_update(update);
+  if (result.status != UpdateStatus::Ok) {
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return UpdateStats{false, 0, 0, seconds};
+  }
+
+  std::size_t vertices_touched = 0;
+  if (update.kind == UpdateKind::Insert) {
+    recolor_all_greedy();
+    vertices_touched = static_cast<std::size_t>(graph_.num_vertices());
+  }
+  const ValidationResult coloring_result = validate_exact_coloring(graph_, colors_);
+  if (!coloring_result.ok) {
+    throw std::runtime_error("seq_baseline produced invalid coloring after apply_update: " +
+                             coloring_result.message);
+  }
+
+  const auto end = std::chrono::steady_clock::now();
+  const double seconds = std::chrono::duration<double>(end - start).count();
+  return UpdateStats{true, 1, vertices_touched, seconds};
 }
 
 BatchStats SeqBaselineEngine::apply_batch(const UpdateBatch&) {
-  throw std::logic_error("SeqBaselineEngine::apply_batch is not implemented in Step 1");
+  throw std::logic_error("SeqBaselineEngine::apply_batch is not implemented in Step 2");
 }
 
 Color SeqBaselineEngine::greedy_color_for_vertex(VertexId v) const {

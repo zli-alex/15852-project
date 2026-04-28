@@ -28,6 +28,7 @@ class SeqBaselineEngine final : public ColoringEngine {
 
   AdjacencyGraphStore graph_;
   parlay::sequence<Color> colors_;
+  bool initialized_{false};
 };
 
 }  // namespace dgcolor
