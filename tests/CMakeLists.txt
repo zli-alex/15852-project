@@ -13,6 +13,22 @@ add_test(
   COMMAND $<TARGET_FILE:test_foundation_placeholder>
 )
 
+add_executable(test_rng
+  test_rng.cpp
+  ../src/rng.cpp
+)
+
+target_link_libraries(test_rng
+  PRIVATE
+    dgcolor_project_options
+    dgcolor_parlay
+)
+
+add_test(
+  NAME rng
+  COMMAND $<TARGET_FILE:test_rng>
+)
+
 if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
   add_executable(test_types_batch
     test_types_batch.cpp
