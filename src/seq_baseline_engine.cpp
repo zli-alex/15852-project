@@ -78,8 +78,31 @@ UpdateStats SeqBaselineEngine::apply_update(const EdgeUpdate& update) {
   return UpdateStats{true, 1, vertices_touched, seconds};
 }
 
-BatchStats SeqBaselineEngine::apply_batch(const UpdateBatch&) {
-  throw std::logic_error("SeqBaselineEngine::apply_batch is not implemented in Step 2");
+BatchStats SeqBaselineEngine::apply_batch(const UpdateBatch& batch) {
+  if (!initialized_) {
+    throw std::logic_error(
+        "SeqBaselineEngine::apply_batch requires initialize_coloring() first");
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  const BatchApplyResult result = graph_.apply_batch(batch);
+  if (result.status != UpdateStatus::Ok) {
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return BatchStats{false, batch.size(), 0, 0, seconds};
+  }
+
+  recolor_all_greedy();
+  const ValidationResult coloring_result = validate_exact_coloring(graph_, colors_);
+  if (!coloring_result.ok) {
+    throw std::runtime_error("seq_baseline produced invalid coloring after apply_batch: " +
+                             coloring_result.message);
+  }
+
+  const auto end = std::chrono::steady_clock::now();
+  const double seconds = std::chrono::duration<double>(end - start).count();
+  return BatchStats{true, batch.size(), result.updates_applied,
+                    static_cast<std::size_t>(graph_.num_vertices()), seconds};
 }
 
 Color SeqBaselineEngine::greedy_color_for_vertex(VertexId v) const {
