@@ -1,8 +1,11 @@
 #include "dgcolor/par_relaxed_engine.hpp"
 
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <vector>
+
+#include "dgcolor/validator.hpp"
 
 namespace dgcolor {
 
@@ -71,8 +74,41 @@ void ParRelaxedEngine::initialize_coloring() {
   initialized_ = true;
 }
 
-UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate&) {
-  throw std::logic_error("ParRelaxedEngine::apply_update is not implemented in Step 1");
+UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
+  if (!initialized_) {
+    throw std::logic_error(
+        "ParRelaxedEngine::apply_update requires initialize_coloring() first");
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  const UpdateResult result = graph_.apply_update(update);
+  if (result.status != UpdateStatus::Ok) {
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return UpdateStats{false, 0, 0, seconds};
+  }
+
+  std::size_t vertices_touched = 0;
+  if (update.kind == UpdateKind::Insert) {
+    recolor_all_greedy_relaxed();
+    vertices_touched = static_cast<std::size_t>(graph_.num_vertices());
+  }
+
+  const ValidationResult coloring_result = validate_exact_coloring(graph_, colors_);
+  if (!coloring_result.ok) {
+    throw std::runtime_error("par_relaxed produced invalid coloring after apply_update: " +
+                             coloring_result.message);
+  }
+  for (Color c : colors_) {
+    if (c >= palette_size_) {
+      throw std::runtime_error(
+          "par_relaxed produced out-of-range color after apply_update");
+    }
+  }
+
+  const auto end = std::chrono::steady_clock::now();
+  const double seconds = std::chrono::duration<double>(end - start).count();
+  return UpdateStats{true, 1, vertices_touched, seconds};
 }
 
 BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch&) {

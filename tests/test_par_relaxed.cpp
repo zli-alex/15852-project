@@ -9,12 +9,17 @@ namespace {
 using dgcolor::Color;
 using dgcolor::EdgeUpdate;
 using dgcolor::ParRelaxedEngine;
+using dgcolor::UpdateStats;
 using dgcolor::UpdateBatch;
 using dgcolor::UpdateKind;
 using dgcolor::VertexId;
 
 EdgeUpdate Insert(VertexId u, VertexId v) {
   return EdgeUpdate{UpdateKind::Insert, u, v, 0};
+}
+
+EdgeUpdate Delete(VertexId u, VertexId v) {
+  return EdgeUpdate{UpdateKind::Delete, u, v, 0};
 }
 
 void AssertColorRange(const ParRelaxedEngine& engine) {
@@ -29,6 +34,20 @@ void AssertInitializedColoringValid(const ParRelaxedEngine& engine) {
   const auto validation = dgcolor::validate_exact_coloring(engine.graph(), engine.colors());
   assert(validation.ok);
   AssertColorRange(engine);
+}
+
+void AssertStatsRejected(const UpdateStats& stats) {
+  assert(!stats.applied);
+  assert(stats.edges_changed == 0);
+  assert(stats.vertices_touched == 0);
+  assert(stats.seconds >= 0.0);
+}
+
+void AssertStatsApplied(const UpdateStats& stats, std::size_t expected_vertices_touched) {
+  assert(stats.applied);
+  assert(stats.edges_changed == 1);
+  assert(stats.vertices_touched == expected_vertices_touched);
+  assert(stats.seconds >= 0.0);
 }
 
 UpdateBatch PathEdges() {
@@ -129,9 +148,8 @@ void TestInvalidConstructorArgs() {
   assert(threw_rounds);
 }
 
-void TestUpdateAndBatchStubsThrow() {
+void TestApplyUpdateBeforeInitializeThrows() {
   ParRelaxedEngine engine(4, 3, 1, 2, 8);
-  engine.initialize_coloring();
 
   bool update_threw = false;
   try {
@@ -140,6 +158,104 @@ void TestUpdateAndBatchStubsThrow() {
     update_threw = true;
   }
   assert(update_threw);
+}
+
+void TestInsertionWithoutConflict() {
+  ParRelaxedEngine engine(4, 3, 1, 2, 8);
+  engine.initialize_coloring();
+
+  const UpdateStats stats = engine.apply_update(Insert(0, 1));
+  AssertStatsApplied(stats, 4);
+  AssertInitializedColoringValid(engine);
+  assert(engine.total_rounds() == 0);
+  assert(engine.fallback_count() == 0);
+  assert(engine.vertices_touched_total() == 8);
+}
+
+void TestInsertionWithConflictRequiresRecolor() {
+  UpdateBatch edges;
+  edges.push_back(Insert(0, 1));
+  edges.push_back(Insert(1, 2));
+  ParRelaxedEngine engine(3, 2, 1, 2, 8, edges);
+  engine.initialize_coloring();
+  const auto before = engine.colors();
+
+  const UpdateStats stats = engine.apply_update(Insert(0, 2));
+  AssertStatsApplied(stats, 3);
+  AssertInitializedColoringValid(engine);
+
+  const auto after = engine.colors();
+  assert(before != after);
+  assert(engine.vertices_touched_total() == 6);
+}
+
+void TestDeletionPreservesValidityAndColors() {
+  ParRelaxedEngine engine(5, 3, 1, 2, 8, PathEdges());
+  engine.initialize_coloring();
+  const auto before = engine.colors();
+
+  const UpdateStats stats = engine.apply_update(Delete(2, 3));
+  AssertStatsApplied(stats, 0);
+  AssertInitializedColoringValid(engine);
+  assert(engine.colors() == before);
+  assert(engine.vertices_touched_total() == 5);
+}
+
+void TestRejectedLoopInsertionStable() {
+  ParRelaxedEngine engine(5, 3, 1, 2, 8, PathEdges());
+  engine.initialize_coloring();
+  const auto before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+
+  const UpdateStats stats = engine.apply_update(Insert(1, 1));
+  AssertStatsRejected(stats);
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == before);
+}
+
+void TestRejectedDuplicateInsertionStable() {
+  ParRelaxedEngine engine(5, 3, 1, 2, 8, PathEdges());
+  engine.initialize_coloring();
+  const auto before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+
+  const UpdateStats stats = engine.apply_update(Insert(1, 2));
+  AssertStatsRejected(stats);
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == before);
+}
+
+void TestRejectedMissingDeletionStable() {
+  ParRelaxedEngine engine(5, 3, 1, 2, 8, PathEdges());
+  engine.initialize_coloring();
+  const auto before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+
+  const UpdateStats stats = engine.apply_update(Delete(0, 4));
+  AssertStatsRejected(stats);
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == before);
+}
+
+void TestRejectedDegreeCapInsertionStable() {
+  UpdateBatch edges;
+  edges.push_back(Insert(0, 1));
+  edges.push_back(Insert(0, 2));
+  edges.push_back(Insert(1, 2));
+  ParRelaxedEngine engine(4, 2, 1, 2, 8, edges);
+  engine.initialize_coloring();
+  const auto before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+
+  const UpdateStats stats = engine.apply_update(Insert(0, 3));
+  AssertStatsRejected(stats);
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == before);
+}
+
+void TestApplyBatchStubStillThrows() {
+  ParRelaxedEngine engine(4, 3, 1, 2, 8);
+  engine.initialize_coloring();
 
   bool batch_threw = false;
   try {
@@ -162,6 +278,14 @@ int main() {
   TestInitializeStarGraph();
   TestInitializeNearDeltaCapGraph();
   TestInvalidConstructorArgs();
-  TestUpdateAndBatchStubsThrow();
+  TestApplyUpdateBeforeInitializeThrows();
+  TestInsertionWithoutConflict();
+  TestInsertionWithConflictRequiresRecolor();
+  TestDeletionPreservesValidityAndColors();
+  TestRejectedLoopInsertionStable();
+  TestRejectedDuplicateInsertionStable();
+  TestRejectedMissingDeletionStable();
+  TestRejectedDegreeCapInsertionStable();
+  TestApplyBatchStubStillThrows();
   return 0;
 }
