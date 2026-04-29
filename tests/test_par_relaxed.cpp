@@ -328,19 +328,17 @@ void TestApplyBatchBeforeInitializeThrows() {
 }
 
 void TestAcceptedInsertionBatch() {
-  ParRelaxedEngine engine(5, 3, 1, 2, 8);
+  ParRelaxedEngine engine(5, 3, 1, 2, 8, PathEdges());
   engine.initialize_coloring();
   UpdateBatch batch;
-  batch.push_back(Insert(0, 1));
-  batch.push_back(Insert(2, 3));
+  batch.push_back(Insert(0, 3));
+  batch.push_back(Insert(1, 4));
 
   const auto touched_before = engine.vertices_touched_total();
   const BatchStats stats = engine.apply_batch(batch);
-  // Step 6C has not wired batch repair yet, so accepted batches still full-recolor.
-  // Do not change this expectation back to 0 before Step 6D wires repair into apply_batch().
-  AssertBatchStatsApplied(stats, 2, 2, 5);
+  AssertBatchStatsApplied(stats, 2, 2, 0);
   AssertInitializedColoringValid(engine);
-  assert(engine.vertices_touched_total() == touched_before + 5);
+  assert(engine.vertices_touched_total() == touched_before);
 }
 
 void TestAcceptedMixedInsertDeleteBatch() {
@@ -351,7 +349,10 @@ void TestAcceptedMixedInsertDeleteBatch() {
   batch.push_back(Insert(0, 4));
 
   const BatchStats stats = engine.apply_batch(batch);
-  AssertBatchStatsApplied(stats, 2, 2, 5);
+  assert(stats.applied);
+  assert(stats.updates == 2);
+  assert(stats.edges_changed == 2);
+  assert(stats.seconds >= 0.0);
   AssertInitializedColoringValid(engine);
 }
 
@@ -366,7 +367,10 @@ void TestAcceptedConflictBatchRequiresRecolor() {
   UpdateBatch batch;
   batch.push_back(Insert(0, 2));
   const BatchStats stats = engine.apply_batch(batch);
-  AssertBatchStatsApplied(stats, 1, 1, 3);
+  assert(stats.applied);
+  assert(stats.updates == 1);
+  assert(stats.edges_changed == 1);
+  assert(stats.vertices_touched >= 1);
   AssertInitializedColoringValid(engine);
   assert(engine.colors() != before);
 }
@@ -430,14 +434,23 @@ void TestRejectedDegreeCapBatchStable() {
   assert(engine.fallback_count() == fallbacks_before);
 }
 
-void TestBatchStep3StatsRemainFallbackOnly() {
-  ParRelaxedEngine engine(4, 3, 1, 2, 8);
+void TestMaxRoundsOneBatchStillPreservesCorrectness() {
+  UpdateBatch edges;
+  edges.push_back(Insert(0, 1));
+  edges.push_back(Insert(1, 2));
+  ParRelaxedEngine engine(3, 2, 1, 2, 1, edges);
   engine.initialize_coloring();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
+
   UpdateBatch batch;
-  batch.push_back(Insert(0, 1));
-  (void)engine.apply_batch(batch);
-  assert(engine.total_rounds() == 0);
-  assert(engine.fallback_count() == 0);
+  batch.push_back(Insert(0, 2));
+  const BatchStats stats = engine.apply_batch(batch);
+  assert(stats.applied);
+  assert(stats.edges_changed == 1);
+  AssertInitializedColoringValid(engine);
+  assert(engine.total_rounds() >= rounds_before + 1);
+  assert(engine.fallback_count() >= fallbacks_before);
 }
 
 void TestMaxRoundsOneStillPreservesCorrectness() {
@@ -482,6 +495,40 @@ void TestRepeatedSameSeedUpdateDeterminism() {
   assert(a.vertices_touched_total() == b.vertices_touched_total());
 }
 
+void TestRepeatedSameSeedBatchDeterminism() {
+  const UpdateBatch initial = PathEdges();
+  ParRelaxedEngine a(8, 4, 12345, 4, 4, initial);
+  ParRelaxedEngine b(8, 4, 12345, 4, 4, initial);
+  a.initialize_coloring();
+  b.initialize_coloring();
+
+  UpdateBatch batch1;
+  batch1.push_back(Insert(0, 4));
+  batch1.push_back(Delete(1, 2));
+  batch1.push_back(Insert(2, 6));
+  const BatchStats stats_a1 = a.apply_batch(batch1);
+  const BatchStats stats_b1 = b.apply_batch(batch1);
+  assert(stats_a1.applied == stats_b1.applied);
+  assert(stats_a1.edges_changed == stats_b1.edges_changed);
+  assert(stats_a1.vertices_touched == stats_b1.vertices_touched);
+
+  UpdateBatch batch2;
+  batch2.push_back(Insert(3, 7));
+  batch2.push_back(Delete(0, 1));
+  const BatchStats stats_a2 = a.apply_batch(batch2);
+  const BatchStats stats_b2 = b.apply_batch(batch2);
+  assert(stats_a2.applied == stats_b2.applied);
+  assert(stats_a2.edges_changed == stats_b2.edges_changed);
+  assert(stats_a2.vertices_touched == stats_b2.vertices_touched);
+
+  AssertInitializedColoringValid(a);
+  AssertInitializedColoringValid(b);
+  assert(a.colors() == b.colors());
+  assert(a.total_rounds() == b.total_rounds());
+  assert(a.fallback_count() == b.fallback_count());
+  assert(a.vertices_touched_total() == b.vertices_touched_total());
+}
+
 }  // namespace
 
 int main() {
@@ -507,8 +554,9 @@ int main() {
   TestRejectedDuplicateSameBatchEdgeStable();
   TestRejectedLoopBatchStable();
   TestRejectedDegreeCapBatchStable();
-  TestBatchStep3StatsRemainFallbackOnly();
+  TestMaxRoundsOneBatchStillPreservesCorrectness();
   TestMaxRoundsOneStillPreservesCorrectness();
   TestRepeatedSameSeedUpdateDeterminism();
+  TestRepeatedSameSeedBatchDeterminism();
   return 0;
 }

@@ -130,13 +130,34 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
     return BatchStats{false, batch.size(), 0, 0, seconds};
   }
 
-  recolor_all_greedy_relaxed();
+  std::vector<VertexId> active;
+  active.reserve(batch.size() * 2);
+  for (const EdgeUpdate& update : batch) {
+    if (update.kind == UpdateKind::Insert) {
+      active.push_back(update.u);
+      active.push_back(update.v);
+    }
+  }
+  active = expand_with_neighbors(active);
+
+  std::size_t vertices_touched = 0;
+  if (!active.empty()) {
+    std::uint64_t rounds_attempted = 0;
+    const bool repaired = attempt_parallel_repair(active, &vertices_touched, &rounds_attempted);
+    total_rounds_ += rounds_attempted;
+    vertices_touched_total_ += static_cast<std::uint64_t>(vertices_touched);
+
+    if (!repaired) {
+      ++fallback_count_;
+      recolor_all_greedy_relaxed();
+      vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
+    }
+  }
   validate_coloring_or_throw("apply_batch");
 
   const auto end = std::chrono::steady_clock::now();
   const double seconds = std::chrono::duration<double>(end - start).count();
-  return BatchStats{true, batch.size(), result.updates_applied,
-                    static_cast<std::size_t>(graph_.num_vertices()), seconds};
+  return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
 }
 
 std::uint32_t ParRelaxedEngine::palette_multiplier() const {
