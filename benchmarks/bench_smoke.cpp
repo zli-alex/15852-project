@@ -73,9 +73,9 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
     } else if (arg == "--workload" && i + 1 < argc) {
       cfg->workload = argv[++i];
       if (cfg->workload != "random_attempts" && cfg->workload != "valid_insertions" &&
-          cfg->workload != "mixed_valid") {
+          cfg->workload != "mixed_valid" && cfg->workload != "batch_valid") {
         throw std::invalid_argument(
-            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid)");
+            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid|batch_valid)");
       }
     } else if (arg == "--seed" && i + 1 < argc) {
       std::uint64_t v = 0;
@@ -216,6 +216,34 @@ bool GenerateValidInsertion(dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Deg
   if (edges.find(EdgeKey(u, v)) != edges.end()) {
     return false;
   }
+  *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
+  return true;
+}
+
+bool GenerateValidBatchInsertion(dgcolor::Rng* rng, dgcolor::VertexId n,
+                                 dgcolor::Degree delta_cap,
+                                 const std::vector<dgcolor::Degree>& degrees,
+                                 const std::unordered_set<std::uint64_t>& existing_edges,
+                                 const std::vector<dgcolor::Degree>& pending_degrees,
+                                 const std::unordered_set<std::uint64_t>& batch_edges,
+                                 dgcolor::EdgeUpdate* update) {
+  const dgcolor::VertexId u = rng->uniform_vertex(n);
+  const dgcolor::VertexId v = rng->uniform_vertex(n);
+  if (u == v) {
+    return false;
+  }
+
+  const std::uint64_t key = EdgeKey(u, v);
+  if (existing_edges.find(key) != existing_edges.end() ||
+      batch_edges.find(key) != batch_edges.end()) {
+    return false;
+  }
+
+  if (degrees[u] + pending_degrees[u] >= delta_cap ||
+      degrees[v] + pending_degrees[v] >= delta_cap) {
+    return false;
+  }
+
   *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
   return true;
 }
@@ -433,6 +461,88 @@ int main(int argc, char** argv) {
         }
       } else {
         ++rejected;
+      }
+    }
+  } else if (cfg.workload == "batch_valid") {
+    std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
+    std::unordered_set<std::uint64_t> shadow_edges;
+    std::vector<std::uint64_t> shadow_edge_list;
+    shadow_edges.reserve(cfg.updates * 2 + 1);
+    shadow_edge_list.reserve(cfg.updates);
+
+    while (updates_generated < cfg.updates && generation_attempts < cfg.max_generation_attempts) {
+      const std::size_t remaining_updates = cfg.updates - updates_generated;
+      const std::size_t target_batch_size =
+          (cfg.batch_size < remaining_updates) ? cfg.batch_size : remaining_updates;
+      dgcolor::UpdateBatch batch;
+      batch.reserve(target_batch_size);
+      std::vector<dgcolor::Degree> pending_degrees(cfg.vertices, 0);
+      std::unordered_set<std::uint64_t> batch_edges;
+      batch_edges.reserve(target_batch_size * 2 + 1);
+
+      while (batch.size() < target_batch_size &&
+             generation_attempts < cfg.max_generation_attempts) {
+        ++generation_attempts;
+        dgcolor::EdgeUpdate update{};
+        if (!GenerateValidBatchInsertion(&rng, cfg.vertices, cfg.delta_cap, shadow_degrees,
+                                         shadow_edges, pending_degrees, batch_edges, &update)) {
+          continue;
+        }
+
+        batch.push_back(update);
+        batch_edges.insert(EdgeKey(update.u, update.v));
+        ++pending_degrees[update.u];
+        ++pending_degrees[update.v];
+      }
+
+      if (batch.empty()) {
+        break;
+      }
+
+      updates_generated += batch.size();
+      bool batch_applied = false;
+      std::size_t edges_changed = 0;
+      if (batch.size() == 1) {
+        const dgcolor::EdgeUpdate update = batch[0];
+        if (graph_only) {
+          const dgcolor::UpdateResult result = graph_only->apply_update(update);
+          batch_applied = (result.status == dgcolor::UpdateStatus::Ok);
+          edges_changed = batch_applied ? 1 : 0;
+        } else if (seq_engine) {
+          const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+          batch_applied = stats.applied;
+          edges_changed = stats.edges_changed;
+          vertices_touched_total += stats.vertices_touched;
+        } else {
+          const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+          batch_applied = stats.applied;
+          edges_changed = stats.edges_changed;
+          vertices_touched_total += stats.vertices_touched;
+        }
+      } else if (graph_only) {
+        const dgcolor::BatchApplyResult result = graph_only->apply_batch(batch);
+        batch_applied = (result.status == dgcolor::UpdateStatus::Ok);
+        edges_changed = batch_applied ? result.updates_applied : 0;
+      } else if (seq_engine) {
+        const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        batch_applied = stats.applied;
+        edges_changed = stats.edges_changed;
+        vertices_touched_total += stats.vertices_touched;
+      } else {
+        const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
+        batch_applied = stats.applied;
+        edges_changed = stats.edges_changed;
+        vertices_touched_total += stats.vertices_touched;
+      }
+
+      if (batch_applied) {
+        applied += edges_changed;
+        rejected += (batch.size() - edges_changed);
+        for (const dgcolor::EdgeUpdate& update : batch) {
+          RecordShadowInsertion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
+        }
+      } else {
+        rejected += batch.size();
       }
     }
   } else if (cfg.batch_size <= 1) {
