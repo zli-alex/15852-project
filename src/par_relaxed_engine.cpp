@@ -3,10 +3,7 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
-#include <utility>
 #include <vector>
-
-#include <parlay/parallel.h>
 
 #include "dgcolor/validator.hpp"
 
@@ -92,19 +89,9 @@ UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
   }
 
   std::size_t vertices_touched = 0;
-  std::uint64_t rounds_attempted = 0;
   if (update.kind == UpdateKind::Insert) {
-    const std::vector<VertexId> initial_active = initial_active_from_update(update);
-    if (!initial_active.empty()) {
-      const bool solved =
-          attempt_parallel_repair(initial_active, &vertices_touched, &rounds_attempted);
-      total_rounds_ += rounds_attempted;
-      if (!solved) {
-        ++fallback_count_;
-        recolor_all_greedy_relaxed();
-        vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
-      }
-    }
+    recolor_all_greedy_relaxed();
+    vertices_touched = static_cast<std::size_t>(graph_.num_vertices());
   }
 
   validate_coloring_or_throw("apply_update");
@@ -128,23 +115,13 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
     return BatchStats{false, batch.size(), 0, 0, seconds};
   }
 
-  std::size_t vertices_touched = 0;
-  std::uint64_t rounds_attempted = 0;
-  const std::vector<VertexId> initial_active = initial_active_from_batch(batch);
-  if (!initial_active.empty()) {
-    const bool solved = attempt_parallel_repair(initial_active, &vertices_touched, &rounds_attempted);
-    total_rounds_ += rounds_attempted;
-    if (!solved) {
-      ++fallback_count_;
-      recolor_all_greedy_relaxed();
-      vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
-    }
-  }
+  recolor_all_greedy_relaxed();
   validate_coloring_or_throw("apply_batch");
 
   const auto end = std::chrono::steady_clock::now();
   const double seconds = std::chrono::duration<double>(end - start).count();
-  return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
+  return BatchStats{true, batch.size(), result.updates_applied,
+                    static_cast<std::size_t>(graph_.num_vertices()), seconds};
 }
 
 std::uint32_t ParRelaxedEngine::palette_multiplier() const {
@@ -202,35 +179,26 @@ void ParRelaxedEngine::recolor_all_greedy_relaxed() {
   vertices_touched_total_ += static_cast<std::uint64_t>(graph_.num_vertices());
 }
 
-Color ParRelaxedEngine::deterministic_proposal_color(VertexId v, std::uint64_t round_index) const {
-  const std::size_t palette_size = static_cast<std::size_t>(palette_size_);
-  std::vector<bool> unavailable(palette_size, false);
-  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-  for (VertexId u : nbrs) {
-    const Color c = colors_[u];
-    if (c != kUncolored && c < palette_size_) {
-      unavailable[c] = true;
-    }
-  }
+bool ParRelaxedEngine::color_in_palette_range(Color c) const {
+  return c != kUncolored && c < palette_size_;
+}
 
-  auto mix64 = [](std::uint64_t x) {
-    x ^= x >> 33U;
-    x *= 0xff51afd7ed558ccdULL;
-    x ^= x >> 33U;
-    x *= 0xc4ceb9fe1a85ec53ULL;
-    x ^= x >> 33U;
-    return x;
-  };
-  const std::uint64_t h = mix64(seed_ ^ (round_index + 0x9e3779b97f4a7c15ULL) ^
-                                (static_cast<std::uint64_t>(v) * 0xbf58476d1ce4e5b9ULL));
-  const Color start = static_cast<Color>(h % palette_size_);
-  for (Color attempt = 0; attempt < palette_size_; ++attempt) {
-    const Color candidate = static_cast<Color>((start + attempt) % palette_size_);
-    if (!unavailable[candidate]) {
-      return candidate;
-    }
-  }
-  return start;
+std::uint64_t ParRelaxedEngine::deterministic_hash(std::uint64_t round_index, VertexId v,
+                                                   std::uint64_t salt) const {
+  std::uint64_t x = seed_ ^ (round_index + 0x9e3779b97f4a7c15ULL) ^
+                    (static_cast<std::uint64_t>(v) * 0xbf58476d1ce4e5b9ULL) ^ salt;
+  x ^= x >> 33U;
+  x *= 0xff51afd7ed558ccdULL;
+  x ^= x >> 33U;
+  x *= 0xc4ceb9fe1a85ec53ULL;
+  x ^= x >> 33U;
+  return x;
+}
+
+Color ParRelaxedEngine::deterministic_color_offset(std::uint64_t round_index, VertexId v,
+                                                   std::uint64_t salt) const {
+  return static_cast<Color>(deterministic_hash(round_index, v, salt) %
+                            static_cast<std::uint64_t>(palette_size_));
 }
 
 std::vector<VertexId> ParRelaxedEngine::expand_with_neighbors(const std::vector<VertexId>& seeds) const {
@@ -256,14 +224,17 @@ std::vector<VertexId> ParRelaxedEngine::expand_with_neighbors(const std::vector<
   return out;
 }
 
-std::vector<VertexId> ParRelaxedEngine::conflicted_vertices_from_candidates(
+std::vector<VertexId> ParRelaxedEngine::collect_conflicted_vertices_from_candidates(
     const std::vector<VertexId>& candidates) const {
+  const VertexId n = graph_.num_vertices();
+  std::vector<unsigned char> visited(n, 0);
   std::vector<VertexId> conflicted;
   conflicted.reserve(candidates.size());
   for (VertexId v : candidates) {
-    if (v >= graph_.num_vertices()) {
+    if (v >= n || visited[v]) {
       continue;
     }
+    visited[v] = 1;
     const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
     bool conflict = false;
     for (VertexId u : nbrs) {
@@ -279,96 +250,6 @@ std::vector<VertexId> ParRelaxedEngine::conflicted_vertices_from_candidates(
   return conflicted;
 }
 
-bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& initial_active,
-                                               std::size_t* vertices_touched,
-                                               std::uint64_t* rounds_attempted) {
-  std::vector<VertexId> active = conflicted_vertices_from_candidates(initial_active);
-  if (active.empty()) {
-    return true;
-  }
-
-  for (std::uint64_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
-    ++(*rounds_attempted);
-    *vertices_touched += active.size();
-    vertices_touched_total_ += active.size();
-
-    const VertexId n = graph_.num_vertices();
-    std::vector<int64_t> active_pos(n, -1);
-    for (std::size_t i = 0; i < active.size(); ++i) {
-      active_pos[active[i]] = static_cast<int64_t>(i);
-    }
-
-    std::vector<Color> proposed(active.size(), 0);
-    std::vector<unsigned char> safe(active.size(), 0);
-
-    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
-      proposed[i] = deterministic_proposal_color(active[i], total_rounds_ + round);
-    });
-
-    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
-      const VertexId v = active[i];
-      const Color pv = proposed[i];
-      bool ok = true;
-      const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-      for (VertexId u : nbrs) {
-        if (pv == colors_[u]) {
-          ok = false;
-          break;
-        }
-        const int64_t j = active_pos[u];
-        if (j >= 0 && pv == proposed[static_cast<std::size_t>(j)] && u < v) {
-          // Deterministic tie break for adjacent active vertices with same proposal:
-          // lower vertex id wins, higher vertex id retries in later rounds.
-          ok = false;
-          break;
-        }
-      }
-      safe[i] = ok ? 1 : 0;
-    });
-
-    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
-      if (safe[i]) {
-        colors_[active[i]] = proposed[i];
-      }
-    });
-
-    const std::vector<VertexId> expanded = expand_with_neighbors(active);
-    active = conflicted_vertices_from_candidates(expanded);
-  }
-
-  return active.empty();
-}
-
-std::vector<VertexId> ParRelaxedEngine::initial_active_from_update(const EdgeUpdate& update) const {
-  if (update.kind != UpdateKind::Insert) {
-    return {};
-  }
-  if (colors_[update.u] != colors_[update.v]) {
-    return {};
-  }
-  std::vector<VertexId> seeds = {update.u, update.v};
-  return expand_with_neighbors(seeds);
-}
-
-std::vector<VertexId> ParRelaxedEngine::initial_active_from_batch(const UpdateBatch& batch) const {
-  std::vector<VertexId> seeds;
-  seeds.reserve(batch.size() * 2);
-  for (const EdgeUpdate& update : batch) {
-    if (update.kind == UpdateKind::Insert) {
-      seeds.push_back(update.u);
-      seeds.push_back(update.v);
-    }
-    if (colors_[update.u] == colors_[update.v]) {
-      seeds.push_back(update.u);
-      seeds.push_back(update.v);
-    }
-  }
-  if (seeds.empty()) {
-    return {};
-  }
-  return expand_with_neighbors(seeds);
-}
-
 void ParRelaxedEngine::validate_coloring_or_throw(const char* context) const {
   const ValidationResult coloring_result = validate_exact_coloring(graph_, colors_);
   if (!coloring_result.ok) {
@@ -376,7 +257,7 @@ void ParRelaxedEngine::validate_coloring_or_throw(const char* context) const {
                              ": " + coloring_result.message);
   }
   for (Color c : colors_) {
-    if (c >= palette_size_) {
+    if (!color_in_palette_range(c)) {
       throw std::runtime_error(std::string("par_relaxed produced out-of-range color after ") +
                                context);
     }
