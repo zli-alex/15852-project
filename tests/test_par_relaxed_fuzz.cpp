@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -173,15 +174,25 @@ void RunBatchScenario(std::uint64_t seed, VertexId n, dgcolor::Degree delta_cap,
 }  // namespace
 
 int main() {
-  // Keep this target small enough for default CTest. The repair-round path is
-  // intentionally heavier than the earlier full-recolor baseline, so broader
-  // stress sweeps should live in a separate script rather than this test.
-  constexpr std::size_t kStepsPerScenario = 25;
-  const std::vector<std::uint64_t> seeds = {1, 99991};
-  const std::vector<VertexId> sizes = {2, 8, 32};
-  const std::vector<std::uint32_t> multipliers = {2, 4, 8};
+  const char* extended_env = std::getenv("DGCOLOR_EXTENDED_FUZZ");
+  const bool extended = (extended_env != nullptr && std::string(extended_env) == "1");
+
+  // Keep the default target small enough for normal CTest. The repair-round
+  // path is intentionally heavier than the earlier full-recolor baseline.
+  const std::size_t steps_per_scenario = extended ? 100 : 10;
+  const std::vector<std::uint64_t> seeds =
+      extended ? std::vector<std::uint64_t>{1, 2, 3, 12345, 99991}
+               : std::vector<std::uint64_t>{1};
+  const std::vector<VertexId> sizes =
+      extended ? std::vector<VertexId>{2, 4, 8, 16, 32} : std::vector<VertexId>{8, 32};
+  const std::vector<std::uint32_t> multipliers =
+      extended ? std::vector<std::uint32_t>{2, 4, 8} : std::vector<std::uint32_t>{2, 8};
   const std::vector<std::uint32_t> max_rounds_values = {1, 4};
-  const std::vector<std::size_t> batch_sizes = {2, 4};
+  const std::vector<std::size_t> batch_sizes =
+      extended ? std::vector<std::size_t>{2, 4, 8} : std::vector<std::size_t>{2};
+
+  std::cerr << "par_relaxed_fuzz_mode=" << (extended ? "extended" : "default")
+            << " steps_per_scenario=" << steps_per_scenario << "\n";
 
   for (std::uint64_t seed : seeds) {
     for (VertexId n : sizes) {
@@ -190,10 +201,10 @@ int main() {
         for (std::uint32_t palette_multiplier : multipliers) {
           for (std::uint32_t max_rounds : max_rounds_values) {
             RunSingleUpdateScenario(seed, n, delta_cap, palette_multiplier, max_rounds,
-                                    kStepsPerScenario);
+                                    steps_per_scenario);
             for (std::size_t batch_size : batch_sizes) {
               RunBatchScenario(seed + static_cast<std::uint64_t>(1000U * batch_size), n, delta_cap,
-                               palette_multiplier, max_rounds, kStepsPerScenario, batch_size);
+                               palette_multiplier, max_rounds, steps_per_scenario, batch_size);
             }
           }
         }
