@@ -11,6 +11,15 @@
 
 namespace dgcolor {
 
+namespace {
+
+double SecondsBetween(const std::chrono::steady_clock::time_point& start,
+                      const std::chrono::steady_clock::time_point& end) {
+  return std::chrono::duration<double>(end - start).count();
+}
+
+}  // namespace
+
 Color ParRelaxedEngine::compute_palette_size(Degree delta_cap, std::uint32_t palette_multiplier) {
   if (palette_multiplier == 0) {
     throw std::invalid_argument("ParRelaxedEngine requires palette_multiplier >= 1");
@@ -93,8 +102,20 @@ UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
   std::size_t vertices_touched = 0;
   if (update.kind == UpdateKind::Insert) {
     if (colors_[update.u] == colors_[update.v]) {
+      std::chrono::steady_clock::time_point active_build_start;
+      if (diagnostics_enabled_) {
+        active_build_start = std::chrono::steady_clock::now();
+      }
       std::vector<VertexId> active = {update.u, update.v};
+      if (diagnostics_enabled_) {
+        diagnostics_.active_vertices_initial_total += static_cast<std::uint64_t>(active.size());
+      }
       active = expand_with_neighbors(active);
+      if (diagnostics_enabled_) {
+        diagnostics_.active_vertices_expanded_total += static_cast<std::uint64_t>(active.size());
+        diagnostics_.active_build_seconds +=
+            SecondsBetween(active_build_start, std::chrono::steady_clock::now());
+      }
 
       std::uint64_t rounds_attempted = 0;
       const bool repaired = attempt_parallel_repair(active, &vertices_touched, &rounds_attempted);
@@ -131,6 +152,10 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
   }
 
   std::vector<VertexId> active;
+  std::chrono::steady_clock::time_point active_build_start;
+  if (diagnostics_enabled_) {
+    active_build_start = std::chrono::steady_clock::now();
+  }
   active.reserve(batch.size() * 2);
   for (const EdgeUpdate& update : batch) {
     if (update.kind == UpdateKind::Insert) {
@@ -138,7 +163,15 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
       active.push_back(update.v);
     }
   }
+  if (diagnostics_enabled_) {
+    diagnostics_.active_vertices_initial_total += static_cast<std::uint64_t>(active.size());
+  }
   active = expand_with_neighbors(active);
+  if (diagnostics_enabled_) {
+    diagnostics_.active_vertices_expanded_total += static_cast<std::uint64_t>(active.size());
+    diagnostics_.active_build_seconds +=
+        SecondsBetween(active_build_start, std::chrono::steady_clock::now());
+  }
 
   std::size_t vertices_touched = 0;
   if (!active.empty()) {
@@ -184,11 +217,26 @@ std::uint64_t ParRelaxedEngine::vertices_touched_total() const {
   return vertices_touched_total_;
 }
 
+void ParRelaxedEngine::set_diagnostics_enabled(bool enabled) {
+  diagnostics_enabled_ = enabled;
+}
+
+bool ParRelaxedEngine::diagnostics_enabled() const {
+  return diagnostics_enabled_;
+}
+
+ParRelaxedDiagnostics ParRelaxedEngine::diagnostics() const {
+  return diagnostics_;
+}
+
 Color ParRelaxedEngine::greedy_color_for_vertex(VertexId v) const {
   const std::size_t palette_size = static_cast<std::size_t>(palette_size_);
   std::vector<bool> unavailable(palette_size, false);
 
   const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+  if (diagnostics_enabled_) {
+    ++diagnostics_.neighbor_scans;
+  }
   for (VertexId u : nbrs) {
     const Color neighbor_color = colors_[u];
     if (neighbor_color != kUncolored && neighbor_color < palette_size_) {
@@ -246,6 +294,9 @@ std::vector<VertexId> ParRelaxedEngine::expand_with_neighbors(const std::vector<
     }
     mark[v] = 1;
     const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+    if (diagnostics_enabled_) {
+      ++diagnostics_.neighbor_scans;
+    }
     for (VertexId u : nbrs) {
       mark[u] = 1;
     }
@@ -272,6 +323,9 @@ std::vector<VertexId> ParRelaxedEngine::collect_conflicted_vertices_from_candida
     }
     visited[v] = 1;
     const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+    if (diagnostics_enabled_) {
+      ++diagnostics_.neighbor_scans;
+    }
     bool conflict = false;
     for (VertexId u : nbrs) {
       if (colors_[u] == colors_[v]) {
@@ -289,14 +343,39 @@ std::vector<VertexId> ParRelaxedEngine::collect_conflicted_vertices_from_candida
 bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& initial_active,
                                                std::size_t* vertices_touched,
                                                std::uint64_t* rounds_attempted) {
+  const bool diagnostics_enabled = diagnostics_enabled_;
+  if (diagnostics_enabled) {
+    ++diagnostics_.repair_calls;
+  }
+  std::chrono::steady_clock::time_point repair_start;
+  if (diagnostics_enabled) {
+    repair_start = std::chrono::steady_clock::now();
+  }
+
+  std::chrono::steady_clock::time_point active_build_start;
+  if (diagnostics_enabled) {
+    active_build_start = std::chrono::steady_clock::now();
+  }
   std::vector<VertexId> active = collect_conflicted_vertices_from_candidates(initial_active);
+  if (diagnostics_enabled) {
+    diagnostics_.conflicted_vertices_initial_total += static_cast<std::uint64_t>(active.size());
+    diagnostics_.active_build_seconds +=
+        SecondsBetween(active_build_start, std::chrono::steady_clock::now());
+  }
+
   if (active.empty()) {
+    if (diagnostics_enabled) {
+      diagnostics_.repair_seconds += SecondsBetween(repair_start, std::chrono::steady_clock::now());
+    }
     return true;
   }
 
   for (std::uint64_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
     if (rounds_attempted != nullptr) {
       ++(*rounds_attempted);
+    }
+    if (diagnostics_enabled) {
+      ++diagnostics_.repair_rounds;
     }
     if (vertices_touched != nullptr) {
       *vertices_touched += active.size();
@@ -310,6 +389,10 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
 
     std::vector<Color> proposed(active.size(), kUncolored);
     std::vector<unsigned char> safe(active.size(), 0);
+    std::vector<std::uint64_t> proposal_neighbor_scans(
+        diagnostics_enabled ? active.size() : 0, 0);
+    std::vector<std::uint64_t> safety_neighbor_scans(
+        diagnostics_enabled ? active.size() : 0, 0);
 
     parlay::parallel_for(0, active.size(), [&](std::size_t i) {
       const VertexId v = active[i];
@@ -318,6 +401,9 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
         const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
         bool available = true;
         const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+        if (diagnostics_enabled) {
+          ++proposal_neighbor_scans[i];
+        }
         for (VertexId u : nbrs) {
           if (colors_[u] == candidate) {
             available = false;
@@ -340,6 +426,9 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
 
       bool ok = true;
       const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+      if (diagnostics_enabled) {
+        ++safety_neighbor_scans[i];
+      }
       for (VertexId u : nbrs) {
         if (colors_[u] == candidate) {
           ok = false;
@@ -357,6 +446,20 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
       safe[i] = ok ? 1 : 0;
     });
 
+    if (diagnostics_enabled) {
+      for (std::uint64_t scans : proposal_neighbor_scans) {
+        diagnostics_.neighbor_scans += scans;
+      }
+      for (std::uint64_t scans : safety_neighbor_scans) {
+        diagnostics_.neighbor_scans += scans;
+      }
+      for (std::size_t i = 0; i < safe.size(); ++i) {
+        if (safe[i]) {
+          ++diagnostics_.commits_total;
+        }
+      }
+    }
+
     parlay::parallel_for(0, active.size(), [&](std::size_t i) {
       if (safe[i]) {
         colors_[active[i]] = proposed[i];
@@ -367,7 +470,11 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
     active = collect_conflicted_vertices_from_candidates(expanded);
   }
 
-  return active.empty();
+  const bool repaired = active.empty();
+  if (diagnostics_enabled) {
+    diagnostics_.repair_seconds += SecondsBetween(repair_start, std::chrono::steady_clock::now());
+  }
+  return repaired;
 }
 
 void ParRelaxedEngine::validate_coloring_or_throw(const char* context) const {

@@ -25,6 +25,7 @@ struct BenchConfig {
   std::size_t batch_size{16};
   std::uint32_t palette_multiplier{2};
   std::uint32_t max_rounds{4};
+  bool diagnostics{false};
 };
 
 bool ParseU64(const std::string& text, std::uint64_t* out) {
@@ -88,6 +89,12 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
         throw std::invalid_argument("invalid --max-rounds");
       }
       cfg->max_rounds = static_cast<std::uint32_t>(v);
+    } else if (arg == "--diagnostics" && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v) || v > 1) {
+        throw std::invalid_argument("invalid --diagnostics (expected 0|1)");
+      }
+      cfg->diagnostics = (v == 1);
     } else {
       throw std::invalid_argument("unknown or incomplete argument: " + arg);
     }
@@ -162,6 +169,7 @@ int main(int argc, char** argv) {
     par_relaxed_engine = std::make_unique<dgcolor::ParRelaxedEngine>(
         cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds);
     par_relaxed_engine->initialize_coloring();
+    par_relaxed_engine->set_diagnostics_enabled(cfg.diagnostics);
     initial_edges = par_relaxed_engine->graph().num_edges();
     palette_multiplier_out = par_relaxed_engine->palette_multiplier();
     palette_size_out = par_relaxed_engine->palette_size();
@@ -329,6 +337,18 @@ int main(int argc, char** argv) {
     PrintMetric("max_rounds", max_rounds_out);
     PrintMetric("total_rounds", total_rounds_out);
     PrintMetric("fallback_count", fallback_count_out);
+    if (cfg.diagnostics) {
+      const dgcolor::ParRelaxedDiagnostics diagnostics = par_relaxed_engine->diagnostics();
+      PrintMetric("repair_calls", diagnostics.repair_calls);
+      PrintMetric("repair_rounds", diagnostics.repair_rounds);
+      PrintMetric("active_vertices_initial_total", diagnostics.active_vertices_initial_total);
+      PrintMetric("active_vertices_expanded_total", diagnostics.active_vertices_expanded_total);
+      PrintMetric("conflicted_vertices_initial_total", diagnostics.conflicted_vertices_initial_total);
+      PrintMetric("neighbor_scans", diagnostics.neighbor_scans);
+      PrintMetric("commits_total", diagnostics.commits_total);
+      PrintMetric("repair_seconds", diagnostics.repair_seconds);
+      PrintMetric("active_build_seconds", diagnostics.active_build_seconds);
+    }
   }
 
   if (!graph_validated) {

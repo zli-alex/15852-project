@@ -9,6 +9,18 @@
 
 namespace dgcolor {
 
+struct ParRelaxedDiagnostics {
+  std::uint64_t repair_calls{0};
+  std::uint64_t repair_rounds{0};
+  std::uint64_t active_vertices_initial_total{0};
+  std::uint64_t active_vertices_expanded_total{0};
+  std::uint64_t conflicted_vertices_initial_total{0};
+  std::uint64_t neighbor_scans{0};
+  std::uint64_t commits_total{0};
+  double repair_seconds{0.0};
+  double active_build_seconds{0.0};
+};
+
 class ParRelaxedEngine final : public ColoringEngine {
  public:
   ParRelaxedEngine(VertexId num_vertices, Degree delta_cap, std::uint64_t seed,
@@ -33,6 +45,9 @@ class ParRelaxedEngine final : public ColoringEngine {
   std::uint64_t total_rounds() const;
   std::uint64_t fallback_count() const;
   std::uint64_t vertices_touched_total() const;
+  void set_diagnostics_enabled(bool enabled);
+  bool diagnostics_enabled() const;
+  ParRelaxedDiagnostics diagnostics() const;
 
  private:
   Color greedy_color_for_vertex(VertexId v) const;
@@ -61,6 +76,8 @@ class ParRelaxedEngine final : public ColoringEngine {
   std::uint64_t total_rounds_{0};
   std::uint64_t fallback_count_{0};
   std::uint64_t vertices_touched_total_{0};
+  bool diagnostics_enabled_{false};
+  mutable ParRelaxedDiagnostics diagnostics_;
 };
 
 }  // namespace dgcolor
