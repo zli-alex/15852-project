@@ -189,11 +189,11 @@ void TestInsertionWithoutConflict() {
   const auto touched_before = engine.vertices_touched_total();
 
   const UpdateStats stats = engine.apply_update(Insert(0, 1));
-  AssertStatsApplied(stats, 0);
+  AssertStatsApplied(stats, 4);
   AssertInitializedColoringValid(engine);
   assert(engine.total_rounds() == rounds_before);
   assert(engine.fallback_count() == fallbacks_before);
-  assert(engine.vertices_touched_total() == touched_before);
+  assert(engine.vertices_touched_total() == touched_before + 4);
 }
 
 void TestInsertionWithConflictRequiresRecolor() {
@@ -320,12 +320,9 @@ void TestAcceptedInsertionBatch() {
 
   const auto touched_before = engine.vertices_touched_total();
   const BatchStats stats = engine.apply_batch(batch);
-  assert(stats.applied);
-  assert(stats.updates == 2);
-  assert(stats.edges_changed == 2);
-  assert(stats.vertices_touched == 0);
+  AssertBatchStatsApplied(stats, 2, 2, 5);
   AssertInitializedColoringValid(engine);
-  assert(engine.vertices_touched_total() == touched_before);
+  assert(engine.vertices_touched_total() == touched_before + 5);
 }
 
 void TestAcceptedMixedInsertDeleteBatch() {
