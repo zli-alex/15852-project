@@ -289,3 +289,22 @@ Yes—implement in the explicit conservative sequence:
 3. Step 6C update-path wiring.
 4. Step 6D batch-path wiring.
 5. Then broaden tests/fuzz validation on Linux.
+
+## Step 6 completion checkpoint
+
+- Step 6A/6B/6C/6D are complete.
+- Accepted insertions and accepted batches now use bounded phase-separated repair rounds before fallback.
+- Accepted deletions do not trigger repair.
+- Rejected updates/batches preserve graph, colors, and stats.
+- Full relaxed greedy recolor remains the fallback if repair does not resolve all conflicts within `max_rounds_`.
+- `total_rounds_`, `fallback_count_`, and `vertices_touched_total_` are now meaningful and should be expected to vary by workload.
+- Default `par_relaxed_fuzz` is intentionally a small smoke-fuzz target for regular CTest. Use extended mode for broader stress:
+
+```bash
+DGCOLOR_EXTENDED_FUZZ=1 ctest --test-dir build -R '^par_relaxed_fuzz$' --output-on-failure
+```
+
+Linux validation checkpoint:
+- `scripts/run_par_relaxed_smoke.sh` completed with `run_complete=1`.
+- Full CTest passed: `100% tests passed, 0 tests failed out of 10`.
+- Total test time was around 6 seconds.

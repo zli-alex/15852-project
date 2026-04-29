@@ -1,12 +1,12 @@
 # Dynamic Graph Coloring (C++17 + ParlayLib)
 
-This repository currently has Foundation, SEQ-Baseline, and PAR-Relaxed (through Step 5 benchmark integration) implemented.
+This repository currently has Foundation, SEQ-Baseline, and PAR-Relaxed (through Step 6 phase-separated repair rounds) implemented.
 
 - Shared infrastructure is in place (`types`, `batch`, `GraphStore`, validators, RNG).
 - `SeqBaselineEngine` is implemented as a correctness-first sequential exact baseline.
 - Benchmarks support `graph_store_only`, `seq_baseline`, and `par_relaxed`.
-- `ParRelaxedEngine` is correctness-first at this stage and does full relaxed greedy recoloring after accepted updates/batches.
-- True phase-separated parallel rounds for PAR-Relaxed are not implemented yet.
+- `ParRelaxedEngine` uses deterministic phase-separated repair rounds for accepted insertions and accepted batches, with full relaxed greedy recolor fallback for correctness.
+- Accepted deletions do not trigger repair; rejected updates/batches preserve graph, colors, and stats.
 - Paper-specific exact algorithms (SEQ-Exact, PAR-Exact) are not implemented yet.
 
 ## Requirements
@@ -130,8 +130,8 @@ coloring_validated=1
 palette_multiplier=4
 palette_size=33
 max_rounds=4
-total_rounds=0
-fallback_count=0
+total_rounds=<rounds>
+fallback_count=<fallbacks>
 vertices_touched_total=<value>
 ```
 
@@ -141,13 +141,19 @@ Notes:
 - `graph_store_only` remains the default mode for backward compatibility.
 - `seq_baseline` is correctness-first and uses full greedy recoloring after accepted insertions and accepted batches.
 - `par_relaxed` is benchmark-selectable via `--engine par_relaxed`.
-- `par_relaxed` currently uses correctness-first full relaxed greedy recoloring after accepted updates/batches.
-- `par_relaxed` currently does not run true phase-separated parallel rounds yet.
-- In the current PAR-Relaxed stage, `total_rounds=0` and `fallback_count=0` are expected placeholders.
+- `par_relaxed` uses bounded phase-separated repair rounds for accepted insertions/batches and falls back to full relaxed greedy recolor if conflicts remain.
+- `total_rounds`, `fallback_count`, and `vertices_touched_total` are meaningful PAR-Relaxed benchmark metrics.
 - `par_relaxed` CLI options: `--palette-multiplier`, `--c`, `--max-rounds`.
 - `seq_baseline` is not the paper-specific SEQ-Exact algorithm.
 - `graph_validated=1` indicates final structural validation success; `coloring_validated=1` indicates final exact-coloring validation success.
 - Conservative batch behavior is expected: repeated same undirected edge inside a batch may reject the entire batch.
+- `par_relaxed` with `batch_size=4` currently has high `update_seconds` on small graphs; this is a known repair-round overhead/performance issue, not a correctness failure.
+
+Extended PAR-Relaxed fuzz:
+
+```bash
+DGCOLOR_EXTENDED_FUZZ=1 ctest --test-dir build -R '^par_relaxed_fuzz$' --output-on-failure
+```
 
 Linux smoke script:
 
@@ -167,7 +173,8 @@ Linux smoke script:
 - Linux validation for SEQ-Baseline also succeeded:
   - benchmark script completed with `run_complete=1`
   - full CTest passed: `100% tests passed, 0 tests failed out of 8`
-- Linux validation for PAR-Relaxed Step 5 smoke also succeeded:
+- Linux validation for PAR-Relaxed Step 6 smoke also succeeded:
   - benchmark script completed with `run_complete=1`
   - full CTest passed: `100% tests passed, 0 tests failed out of 10`
+  - total test time around 6 seconds
 - Some local macOS setups may fail with missing standard C++ headers. This is an SDK/toolchain environment issue, not a project logic issue. Linux cluster results are the source of truth.

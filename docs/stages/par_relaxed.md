@@ -336,3 +336,48 @@ Stage is complete when all are true on Linux cluster:
 - Recorded Linux smoke outcome:
   - `run_complete=1`
   - `100% tests passed, 0 tests failed out of 10`
+
+## 19. Step 6 checkpoint (phase-separated repair rounds)
+
+### Completed through Step 6
+
+- `ParRelaxedEngine` now uses phase-separated repair rounds for accepted insertions and accepted batches.
+- Accepted deletions do not trigger repair because deletions cannot create new coloring conflicts.
+- Rejected updates/batches preserve graph, colors, and round/fallback stats.
+- Full relaxed greedy recolor remains mandatory fallback if bounded repair leaves unresolved conflicts.
+
+### Current PAR-Relaxed behavior
+
+- Relaxed palette remains `palette_size = c * delta_cap + 1`.
+- Repair rounds are deterministic and phase-separated:
+  - collect active/conflicted vertices,
+  - compute proposals without mutating `colors_`,
+  - detect safe proposals without mutating `colors_`,
+  - commit safe proposals,
+  - recompute unresolved conflicts.
+- `total_rounds`, `fallback_count`, and `vertices_touched_total` are now meaningful metrics in tests and benchmarks.
+
+### Fuzz/runtime policy
+
+- Default `par_relaxed_fuzz` has been trimmed to keep normal CTest fast after repair rounds became active.
+- Extended fuzz remains available with:
+
+```bash
+DGCOLOR_EXTENDED_FUZZ=1 ctest --test-dir build -R '^par_relaxed_fuzz$' --output-on-failure
+```
+
+### Linux validation checkpoint
+
+- Smoke script: `scripts/run_par_relaxed_smoke.sh`
+- Recorded Linux smoke outcome:
+  - `run_complete=1`
+  - full CTest passed: `100% tests passed, 0 tests failed out of 10`
+  - total test time around 6 seconds
+
+### Representative smoke observations
+
+- `graph_store_only` validates graph invariants.
+- `seq_baseline` validates exact coloring and uses full recolor behavior.
+- `par_relaxed` validates graph/coloring and reports nonzero `total_rounds`.
+- `par_relaxed` with `batch_size=1` touches far fewer vertices than `seq_baseline`.
+- `par_relaxed` with `batch_size=4` currently has high `update_seconds` on small graphs; this is a known performance/overhead issue from repair-round machinery, not a correctness failure.
