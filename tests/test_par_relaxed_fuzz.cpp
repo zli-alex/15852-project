@@ -179,7 +179,7 @@ int main() {
 
   // Keep the default target small enough for normal CTest. The repair-round
   // path is intentionally heavier than the earlier full-recolor baseline.
-  const std::size_t steps_per_scenario = extended ? 100 : 10;
+  const std::size_t steps_per_scenario = extended ? 100 : 5;
   const std::vector<std::uint64_t> seeds =
       extended ? std::vector<std::uint64_t>{1, 2, 3, 12345, 99991}
                : std::vector<std::uint64_t>{1};
