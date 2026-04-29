@@ -1,6 +1,7 @@
 #ifndef DGCOLOR_PAR_RELAXED_ENGINE_HPP_
 #define DGCOLOR_PAR_RELAXED_ENGINE_HPP_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -12,6 +13,8 @@ namespace dgcolor {
 struct ParRelaxedDiagnostics {
   std::uint64_t repair_calls{0};
   std::uint64_t repair_rounds{0};
+  std::uint64_t sequential_repair_calls{0};
+  std::uint64_t sequential_repair_rounds{0};
   std::uint64_t active_vertices_initial_total{0};
   std::uint64_t active_vertices_expanded_total{0};
   std::uint64_t conflicted_vertices_initial_total{0};
@@ -50,6 +53,8 @@ class ParRelaxedEngine final : public ColoringEngine {
   ParRelaxedDiagnostics diagnostics() const;
 
  private:
+  static constexpr std::size_t kSequentialRepairThreshold = 128;
+
   Color greedy_color_for_vertex(VertexId v) const;
   void recolor_all_greedy_relaxed();
   static Color compute_palette_size(Degree delta_cap, std::uint32_t palette_multiplier);

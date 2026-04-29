@@ -370,6 +370,7 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
     return true;
   }
 
+  bool used_sequential_repair = false;
   for (std::uint64_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
     if (rounds_attempted != nullptr) {
       ++(*rounds_attempted);
@@ -394,57 +395,120 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
     std::vector<std::uint64_t> safety_neighbor_scans(
         diagnostics_enabled ? active.size() : 0, 0);
 
-    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
-      const VertexId v = active[i];
-      const Color offset = deterministic_color_offset(round, v);
-      for (Color attempt = 0; attempt < palette_size_; ++attempt) {
-        const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
-        bool available = true;
-        const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-        if (diagnostics_enabled) {
-          ++proposal_neighbor_scans[i];
+    const bool sequential_round = active.size() <= kSequentialRepairThreshold;
+    if (sequential_round) {
+      if (diagnostics_enabled) {
+        if (!used_sequential_repair) {
+          ++diagnostics_.sequential_repair_calls;
         }
-        for (VertexId u : nbrs) {
-          if (colors_[u] == candidate) {
-            available = false;
+        ++diagnostics_.sequential_repair_rounds;
+      }
+      used_sequential_repair = true;
+
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        const VertexId v = active[i];
+        const Color offset = deterministic_color_offset(round, v);
+        for (Color attempt = 0; attempt < palette_size_; ++attempt) {
+          const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
+          bool available = true;
+          const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+          if (diagnostics_enabled) {
+            ++proposal_neighbor_scans[i];
+          }
+          for (VertexId u : nbrs) {
+            if (colors_[u] == candidate) {
+              available = false;
+              break;
+            }
+          }
+          if (available) {
+            proposed[i] = candidate;
             break;
           }
         }
-        if (available) {
-          proposed[i] = candidate;
+      }
+
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        const VertexId v = active[i];
+        const Color candidate = proposed[i];
+        if (!color_in_palette_range(candidate)) {
+          continue;
+        }
+
+        bool ok = true;
+        const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+        if (diagnostics_enabled) {
+          ++safety_neighbor_scans[i];
+        }
+        for (VertexId u : nbrs) {
+          if (colors_[u] == candidate) {
+            ok = false;
+            break;
+          }
+
+          const int j = active_index[u];
+          if (j >= 0 && proposed[static_cast<std::size_t>(j)] == candidate && u < v) {
+            // Conservative deterministic tie-break: for adjacent active vertices
+            // proposing the same color, only the lower vertex id may commit.
+            ok = false;
+            break;
+          }
+        }
+        safe[i] = ok ? 1 : 0;
+      }
+    } else {
+      parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+        const VertexId v = active[i];
+        const Color offset = deterministic_color_offset(round, v);
+        for (Color attempt = 0; attempt < palette_size_; ++attempt) {
+          const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
+          bool available = true;
+          const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+          if (diagnostics_enabled) {
+            ++proposal_neighbor_scans[i];
+          }
+          for (VertexId u : nbrs) {
+            if (colors_[u] == candidate) {
+              available = false;
+              break;
+            }
+          }
+          if (available) {
+            proposed[i] = candidate;
+            return;
+          }
+        }
+      });
+
+      parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+        const VertexId v = active[i];
+        const Color candidate = proposed[i];
+        if (!color_in_palette_range(candidate)) {
           return;
         }
-      }
-    });
 
-    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
-      const VertexId v = active[i];
-      const Color candidate = proposed[i];
-      if (!color_in_palette_range(candidate)) {
-        return;
-      }
-
-      bool ok = true;
-      const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-      if (diagnostics_enabled) {
-        ++safety_neighbor_scans[i];
-      }
-      for (VertexId u : nbrs) {
-        if (colors_[u] == candidate) {
-          ok = false;
-          break;
+        bool ok = true;
+        const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+        if (diagnostics_enabled) {
+          ++safety_neighbor_scans[i];
         }
+        for (VertexId u : nbrs) {
+          if (colors_[u] == candidate) {
+            ok = false;
+            break;
+          }
 
-        const int j = active_index[u];
-        if (j >= 0 && proposed[static_cast<std::size_t>(j)] == candidate && u < v) {
-          // Conservative deterministic tie-break: for adjacent active vertices
-          // proposing the same color, only the lower vertex id may commit.
-          ok = false;
-          break;
+          const int j = active_index[u];
+          if (j >= 0 && proposed[static_cast<std::size_t>(j)] == candidate && u < v) {
+            // Conservative deterministic tie-break: for adjacent active vertices
+            // proposing the same color, only the lower vertex id may commit.
+            ok = false;
+            break;
+          }
         }
-      }
-      safe[i] = ok ? 1 : 0;
-    });
+        safe[i] = ok ? 1 : 0;
+      });
+    }
 
     if (diagnostics_enabled) {
       for (std::uint64_t scans : proposal_neighbor_scans) {
@@ -460,11 +524,19 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
       }
     }
 
-    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
-      if (safe[i]) {
-        colors_[active[i]] = proposed[i];
+    if (sequential_round) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        if (safe[i]) {
+          colors_[active[i]] = proposed[i];
+        }
       }
-    });
+    } else {
+      parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+        if (safe[i]) {
+          colors_[active[i]] = proposed[i];
+        }
+      });
+    }
 
     const std::vector<VertexId> expanded = expand_with_neighbors(active);
     active = collect_conflicted_vertices_from_candidates(expanded);

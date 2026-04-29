@@ -341,6 +341,8 @@ int main(int argc, char** argv) {
       const dgcolor::ParRelaxedDiagnostics diagnostics = par_relaxed_engine->diagnostics();
       PrintMetric("repair_calls", diagnostics.repair_calls);
       PrintMetric("repair_rounds", diagnostics.repair_rounds);
+      PrintMetric("sequential_repair_calls", diagnostics.sequential_repair_calls);
+      PrintMetric("sequential_repair_rounds", diagnostics.sequential_repair_rounds);
       PrintMetric("active_vertices_initial_total", diagnostics.active_vertices_initial_total);
       PrintMetric("active_vertices_expanded_total", diagnostics.active_vertices_expanded_total);
       PrintMetric("conflicted_vertices_initial_total", diagnostics.conflicted_vertices_initial_total);
