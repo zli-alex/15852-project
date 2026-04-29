@@ -92,8 +92,21 @@ UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
 
   std::size_t vertices_touched = 0;
   if (update.kind == UpdateKind::Insert) {
-    recolor_all_greedy_relaxed();
-    vertices_touched = static_cast<std::size_t>(graph_.num_vertices());
+    if (colors_[update.u] == colors_[update.v]) {
+      std::vector<VertexId> active = {update.u, update.v};
+      active = expand_with_neighbors(active);
+
+      std::uint64_t rounds_attempted = 0;
+      const bool repaired = attempt_parallel_repair(active, &vertices_touched, &rounds_attempted);
+      total_rounds_ += rounds_attempted;
+      vertices_touched_total_ += static_cast<std::uint64_t>(vertices_touched);
+
+      if (!repaired) {
+        ++fallback_count_;
+        recolor_all_greedy_relaxed();
+        vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
+      }
+    }
   }
 
   validate_coloring_or_throw("apply_update");
