@@ -1,4 +1,45 @@
-# PAR-Relaxed Performance Investigation Plan
+# PAR-Relaxed Performance Investigation
+
+## Completion summary
+
+The investigation is complete. Coarse diagnostics showed that the original `par_relaxed batch_size=4` slowdown was caused by Parlay `parallel_for` / runtime overhead on tiny active sets, not by substantial coloring work.
+
+Original overhead symptom:
+
+- `par_relaxed batch_size=4` on small and medium workloads had very high `repair_seconds`.
+- The medium case reported only `repair_calls=14`, `repair_rounds=14`, `neighbor_scans=624`, and `commits_total=97`, but `repair_seconds` was previously about `21.4s`.
+- This ruled out active-set size, fallback behavior, and excessive neighbor scanning as the dominant cause.
+
+Implemented fix:
+
+- Added a small-active-set sequential fast path inside `attempt_parallel_repair`.
+- Threshold: `kSequentialRepairThreshold = 128`.
+- The fast path preserves the same phase-separated logic:
+  - proposal phase,
+  - safety phase,
+  - commit phase,
+  - unresolved recomputation.
+- It keeps deterministic proposal generation and the same safety/tie-break semantics.
+- Larger active sets still use the parallel path.
+- New opt-in diagnostics:
+  - `sequential_repair_calls`,
+  - `sequential_repair_rounds`.
+
+Validation and results from the recorded Linux run:
+
+- Full CTest passed: `100% tests passed, 0 tests failed out of 10`.
+- Total test time was around `2.78s`.
+- Small problem case `repair_seconds` dropped to about `5e-06s`.
+- Medium problem case `repair_seconds` dropped to about `6.5e-05s`.
+- Medium `update_seconds` dropped to about `0.0043s`.
+- Repeated medium runs were stable around `0.0040-0.0042s update_seconds`.
+
+Remaining risks:
+
+- Sequential and parallel repair branches now duplicate some logic and must be kept aligned.
+- Threshold `128` is empirical.
+- Current benchmark workload has many rejected batches.
+- Future accepted-batch-heavy workloads are still needed before making final performance claims.
 
 ## 1. Goal and non-goals
 
@@ -277,11 +318,11 @@ If rejected batches dominate:
 - Interpret throughput as workload/rejection behavior as much as coloring behavior.
 - Consider a later benchmark workload that controls accepted-update ratio.
 
-## 9. Candidate optimizations, but do not implement them yet
+## 9. Candidate optimizations and outcome
 
-Likely candidates after measurement:
+Original candidate optimizations after measurement:
 
-- Add a sequential fast path inside repair when `active.size()` is below a threshold.
+- Add a sequential fast path inside repair when `active.size()` is below a threshold. Implemented after diagnostics identified tiny-active-set Parlay overhead as the dominant cost.
 - In `apply_batch()`, detect whether accepted inserted edges actually created color conflicts before calling repair machinery.
 - Avoid expanding active sets with all neighbors before checking actual conflicts.
 - Reuse temporary buffers across rounds or across repair calls.
@@ -291,7 +332,7 @@ Likely candidates after measurement:
 - Tune `max_rounds` defaults if extra rounds do little useful work.
 - Consider benchmark workload additions that better represent larger parallel graphs and accepted-update ratios.
 
-Do not choose among these until measurements identify the dominant cost.
+No further optimizations should be chosen until accepted-batch-heavy workloads are measured.
 
 ## 10. Risks of premature optimization
 
@@ -319,8 +360,8 @@ The investigation is complete when:
 
 ## Recommendation
 
-The next step should be instrumentation, not immediate optimization.
+Initial recommendation was instrumentation before optimization. That path was followed.
 
-The most likely first measurement step is to add coarse repair counters and high-level timers around active-set construction and total repair, then rerun the small `batch_size=4` and medium `batch_size=4` scenarios. Do not time every inner repair phase in the first patch; keep diagnostics focused enough that the code remains easy to read.
+Coarse repair counters and high-level timers identified the issue without needing fine-grained proposal/safety/commit timers.
 
-The recommended next coding step after this plan is accepted is a small opt-in instrumentation patch, limited to `ParRelaxedEngine` and `par_relaxed` benchmark metric printing, ideally gated by `--diagnostics 1`. Optimization should wait until those measurements identify the dominant cost.
+The follow-up optimization was the thresholded small-active-set sequential fast path. The current next step is broader benchmarking on accepted-batch-heavy workloads, not another optimization.

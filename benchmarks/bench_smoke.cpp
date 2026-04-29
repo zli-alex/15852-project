@@ -18,6 +18,7 @@ namespace {
 
 struct BenchConfig {
   std::string engine{"graph_store_only"};
+  std::string workload{"random_attempts"};
   std::uint64_t seed{1};
   dgcolor::VertexId vertices{32};
   std::size_t updates{100};
@@ -26,11 +27,31 @@ struct BenchConfig {
   std::uint32_t palette_multiplier{2};
   std::uint32_t max_rounds{4};
   bool diagnostics{false};
+  std::size_t initial_edges_requested{0};
+  double insert_ratio{0.5};
+  std::size_t target_accepted{0};
+  std::size_t max_generation_attempts{0};
+  std::size_t validate_every{0};
+  bool validate_final_only{false};
 };
 
 bool ParseU64(const std::string& text, std::uint64_t* out) {
   try {
     *out = std::stoull(text);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool ParseDouble(const std::string& text, double* out) {
+  try {
+    std::size_t pos = 0;
+    const double value = std::stod(text, &pos);
+    if (pos != text.size()) {
+      return false;
+    }
+    *out = value;
     return true;
   } catch (...) {
     return false;
@@ -46,6 +67,12 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
           cfg->engine != "par_relaxed") {
         throw std::invalid_argument(
             "invalid --engine (expected graph_store_only|seq_baseline|par_relaxed)");
+      }
+    } else if (arg == "--workload" && i + 1 < argc) {
+      cfg->workload = argv[++i];
+      if (cfg->workload != "random_attempts") {
+        throw std::invalid_argument(
+            "invalid --workload for Step 1 (expected random_attempts)");
       }
     } else if (arg == "--seed" && i + 1 < argc) {
       std::uint64_t v = 0;
@@ -95,9 +122,45 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
         throw std::invalid_argument("invalid --diagnostics (expected 0|1)");
       }
       cfg->diagnostics = (v == 1);
+    } else if (arg == "--initial-edges" && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v)) {
+        throw std::invalid_argument("invalid --initial-edges");
+      }
+      cfg->initial_edges_requested = static_cast<std::size_t>(v);
+    } else if (arg == "--insert-ratio" && i + 1 < argc) {
+      double v = 0.0;
+      if (!ParseDouble(argv[++i], &v) || v < 0.0 || v > 1.0) {
+        throw std::invalid_argument("invalid --insert-ratio (expected 0..1)");
+      }
+      cfg->insert_ratio = v;
+    } else if (arg == "--target-accepted" && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v)) {
+        throw std::invalid_argument("invalid --target-accepted");
+      }
+      cfg->target_accepted = static_cast<std::size_t>(v);
+    } else if (arg == "--max-generation-attempts" && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v)) {
+        throw std::invalid_argument("invalid --max-generation-attempts");
+      }
+      cfg->max_generation_attempts = static_cast<std::size_t>(v);
+    } else if (arg == "--validate-every" && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v)) {
+        throw std::invalid_argument("invalid --validate-every");
+      }
+      cfg->validate_every = static_cast<std::size_t>(v);
+    } else if (arg == "--validate-final-only") {
+      cfg->validate_final_only = true;
     } else {
       throw std::invalid_argument("unknown or incomplete argument: " + arg);
     }
+  }
+
+  if (cfg->max_generation_attempts == 0) {
+    cfg->max_generation_attempts = cfg->updates * 100;
   }
 }
 
@@ -138,6 +201,8 @@ int main(int argc, char** argv) {
   }
 
   dgcolor::Rng rng(cfg.seed);
+  const std::size_t generation_attempts = cfg.updates;
+  const std::size_t updates_generated = cfg.updates;
   std::size_t initial_edges = 0;
   std::size_t final_edges = 0;
   std::size_t applied = 0;
@@ -309,18 +374,28 @@ int main(int argc, char** argv) {
 
   const double throughput =
       (update_seconds > 0.0) ? (static_cast<double>(cfg.updates) / update_seconds) : 0.0;
+  const double accepted_ratio =
+      (updates_generated > 0) ? (static_cast<double>(applied) / updates_generated) : 0.0;
 
   PrintMetric("benchmark_name", "foundation_smoke");
   PrintMetric("engine_name", cfg.engine);
+  PrintMetric("workload", cfg.workload);
   PrintMetric("seed", cfg.seed);
   PrintMetric("num_vertices", cfg.vertices);
   PrintMetric("delta_cap", cfg.delta_cap);
+  PrintMetric("generation_attempts", generation_attempts);
   PrintMetric("updates_requested", cfg.updates);
+  PrintMetric("updates_generated", updates_generated);
   PrintMetric("updates_applied", applied);
   PrintMetric("updates_rejected", rejected);
+  PrintMetric("accepted_ratio", accepted_ratio);
   PrintMetric("batch_size", cfg.batch_size);
+  PrintMetric("initial_edges_requested", cfg.initial_edges_requested);
   PrintMetric("initial_edges", initial_edges);
   PrintMetric("final_edges", final_edges);
+  PrintMetric("target_accepted", cfg.target_accepted);
+  PrintMetric("insert_ratio", cfg.insert_ratio);
+  PrintMetric("max_generation_attempts", cfg.max_generation_attempts);
   PrintMetric("build_seconds", build_seconds);
   PrintMetric("update_seconds", update_seconds);
   PrintMetric("validate_seconds", validate_seconds);

@@ -143,11 +143,12 @@ Notes:
 - `par_relaxed` is benchmark-selectable via `--engine par_relaxed`.
 - `par_relaxed` uses bounded phase-separated repair rounds for accepted insertions/batches and falls back to full relaxed greedy recolor if conflicts remain.
 - `total_rounds`, `fallback_count`, and `vertices_touched_total` are meaningful PAR-Relaxed benchmark metrics.
+- Optional PAR-Relaxed diagnostics are available with `--diagnostics 1`, including repair counters/timers and small-active-set fast-path counters.
 - `par_relaxed` CLI options: `--palette-multiplier`, `--c`, `--max-rounds`.
 - `seq_baseline` is not the paper-specific SEQ-Exact algorithm.
 - `graph_validated=1` indicates final structural validation success; `coloring_validated=1` indicates final exact-coloring validation success.
 - Conservative batch behavior is expected: repeated same undirected edge inside a batch may reject the entire batch.
-- `par_relaxed` with `batch_size=4` currently has high `update_seconds` on small graphs; this is a known repair-round overhead/performance issue, not a correctness failure.
+- Earlier `par_relaxed batch_size=4` runs showed high `repair_seconds` despite tiny active sets. Diagnostics identified Parlay tiny-active-set overhead; this is addressed by a thresholded sequential repair fast path for active sets of size `<= 128`.
 
 Extended PAR-Relaxed fuzz:
 
@@ -177,4 +178,8 @@ Linux smoke script:
   - benchmark script completed with `run_complete=1`
   - full CTest passed: `100% tests passed, 0 tests failed out of 10`
   - total test time around 6 seconds
+- Linux validation after the PAR-Relaxed small-active-set repair fast path succeeded:
+  - full CTest passed: `100% tests passed, 0 tests failed out of 10`
+  - total test time around 2.78 seconds
+  - medium `batch_size=4` problem case dropped to about `0.0043s update_seconds`
 - Some local macOS setups may fail with missing standard C++ headers. This is an SDK/toolchain environment issue, not a project logic issue. Linux cluster results are the source of truth.

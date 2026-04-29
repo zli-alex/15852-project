@@ -380,4 +380,46 @@ DGCOLOR_EXTENDED_FUZZ=1 ctest --test-dir build -R '^par_relaxed_fuzz$' --output-
 - `seq_baseline` validates exact coloring and uses full recolor behavior.
 - `par_relaxed` validates graph/coloring and reports nonzero `total_rounds`.
 - `par_relaxed` with `batch_size=1` touches far fewer vertices than `seq_baseline`.
-- `par_relaxed` with `batch_size=4` currently has high `update_seconds` on small graphs; this is a known performance/overhead issue from repair-round machinery, not a correctness failure.
+- Earlier `par_relaxed batch_size=4` runs showed high `update_seconds` on small and medium workloads despite tiny repair sets; this was investigated as a performance issue, not a correctness failure.
+
+## 20. Performance investigation checkpoint
+
+### Diagnosis
+
+- Coarse diagnostics showed the original overhead was dominated by Parlay `parallel_for` / runtime overhead on tiny active sets.
+- In the representative medium problem case, repair work was small:
+  - `repair_calls=14`
+  - `repair_rounds=14`
+  - `neighbor_scans=624`
+  - `commits_total=97`
+- The same medium case previously spent about `21.4s` in `repair_seconds`, which ruled out actual coloring work, fallback behavior, and broad active-set expansion as the dominant cause.
+
+### Implemented fix
+
+- `attempt_parallel_repair` now uses a small-active-set sequential fast path when `active.size() <= 128`.
+- The fixed threshold is `kSequentialRepairThreshold = 128`.
+- The fast path preserves the same deterministic phase-separated behavior:
+  - proposal phase,
+  - safety phase,
+  - commit phase,
+  - unresolved recomputation.
+- Deterministic proposal generation, safety/tie-break semantics, fallback behavior, and larger-active-set parallel behavior remain unchanged.
+- Additional opt-in diagnostics:
+  - `sequential_repair_calls`
+  - `sequential_repair_rounds`
+
+### Validation and measured result
+
+- Full CTest passed on Linux: `100% tests passed, 0 tests failed out of 10`.
+- Recorded total test time was around `2.78s`.
+- Small problem case `repair_seconds` dropped to about `5e-06s`.
+- Medium problem case `repair_seconds` dropped to about `6.5e-05s`.
+- Medium `update_seconds` dropped to about `0.0043s`.
+- Repeated medium runs were stable around `0.0040-0.0042s update_seconds`.
+
+### Remaining risks
+
+- Sequential and parallel repair branches duplicate some logic and should be kept aligned.
+- Threshold `128` is empirical.
+- Current benchmark workload has many rejected batches.
+- Future accepted-batch-heavy workloads are needed before making final performance claims.
