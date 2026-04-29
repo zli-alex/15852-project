@@ -9,6 +9,7 @@
 
 #include "dgcolor/batch.hpp"
 #include "dgcolor/graph_store.hpp"
+#include "dgcolor/par_relaxed_engine.hpp"
 #include "dgcolor/rng.hpp"
 #include "dgcolor/seq_baseline_engine.hpp"
 #include "dgcolor/validator.hpp"
@@ -22,6 +23,8 @@ struct BenchConfig {
   std::size_t updates{100};
   dgcolor::Degree delta_cap{8};
   std::size_t batch_size{16};
+  std::uint32_t palette_multiplier{2};
+  std::uint32_t max_rounds{4};
 };
 
 bool ParseU64(const std::string& text, std::uint64_t* out) {
@@ -38,8 +41,10 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
     const std::string arg = argv[i];
     if (arg == "--engine" && i + 1 < argc) {
       cfg->engine = argv[++i];
-      if (cfg->engine != "graph_store_only" && cfg->engine != "seq_baseline") {
-        throw std::invalid_argument("invalid --engine (expected graph_store_only|seq_baseline)");
+      if (cfg->engine != "graph_store_only" && cfg->engine != "seq_baseline" &&
+          cfg->engine != "par_relaxed") {
+        throw std::invalid_argument(
+            "invalid --engine (expected graph_store_only|seq_baseline|par_relaxed)");
       }
     } else if (arg == "--seed" && i + 1 < argc) {
       std::uint64_t v = 0;
@@ -71,6 +76,18 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
         throw std::invalid_argument("invalid --batch-size");
       }
       cfg->batch_size = static_cast<std::size_t>(v);
+    } else if ((arg == "--palette-multiplier" || arg == "--c") && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v) || v == 0 || v > UINT32_MAX) {
+        throw std::invalid_argument("invalid --palette-multiplier/--c");
+      }
+      cfg->palette_multiplier = static_cast<std::uint32_t>(v);
+    } else if (arg == "--max-rounds" && i + 1 < argc) {
+      std::uint64_t v = 0;
+      if (!ParseU64(argv[++i], &v) || v == 0 || v > UINT32_MAX) {
+        throw std::invalid_argument("invalid --max-rounds");
+      }
+      cfg->max_rounds = static_cast<std::uint32_t>(v);
     } else {
       throw std::invalid_argument("unknown or incomplete argument: " + arg);
     }
@@ -119,6 +136,11 @@ int main(int argc, char** argv) {
   std::size_t applied = 0;
   std::size_t rejected = 0;
   std::size_t vertices_touched_total = 0;
+  std::uint32_t palette_multiplier_out = 0;
+  dgcolor::Color palette_size_out = 0;
+  std::uint32_t max_rounds_out = 0;
+  std::uint64_t total_rounds_out = 0;
+  std::uint64_t fallback_count_out = 0;
   dgcolor::Degree max_degree = 0;
   bool graph_validated = false;
   bool coloring_validated = false;
@@ -128,13 +150,22 @@ int main(int argc, char** argv) {
   const auto build_start = std::chrono::steady_clock::now();
   std::unique_ptr<dgcolor::AdjacencyGraphStore> graph_only;
   std::unique_ptr<dgcolor::SeqBaselineEngine> seq_engine;
+  std::unique_ptr<dgcolor::ParRelaxedEngine> par_relaxed_engine;
   if (cfg.engine == "graph_store_only") {
     graph_only = std::make_unique<dgcolor::AdjacencyGraphStore>(cfg.vertices, cfg.delta_cap);
     initial_edges = graph_only->num_edges();
-  } else {
+  } else if (cfg.engine == "seq_baseline") {
     seq_engine = std::make_unique<dgcolor::SeqBaselineEngine>(cfg.vertices, cfg.delta_cap);
     seq_engine->initialize_coloring();
     initial_edges = seq_engine->graph().num_edges();
+  } else {
+    par_relaxed_engine = std::make_unique<dgcolor::ParRelaxedEngine>(
+        cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds);
+    par_relaxed_engine->initialize_coloring();
+    initial_edges = par_relaxed_engine->graph().num_edges();
+    palette_multiplier_out = par_relaxed_engine->palette_multiplier();
+    palette_size_out = par_relaxed_engine->palette_size();
+    max_rounds_out = par_relaxed_engine->max_rounds();
   }
   const double build_seconds = SecondsSince(build_start);
 
@@ -149,8 +180,16 @@ int main(int argc, char** argv) {
         } else {
           ++rejected;
         }
-      } else {
+      } else if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        if (stats.applied) {
+          ++applied;
+        } else {
+          ++rejected;
+        }
+        vertices_touched_total += stats.vertices_touched;
+      } else {
+        const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
         if (stats.applied) {
           ++applied;
         } else {
@@ -177,8 +216,17 @@ int main(int argc, char** argv) {
         } else {
           rejected += batch.size();
         }
-      } else {
+      } else if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        if (stats.applied) {
+          applied += stats.edges_changed;
+          rejected += (batch.size() - stats.edges_changed);
+        } else {
+          rejected += batch.size();
+        }
+        vertices_touched_total += stats.vertices_touched;
+      } else {
+        const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
         if (stats.applied) {
           applied += stats.edges_changed;
           rejected += (batch.size() - stats.edges_changed);
@@ -204,7 +252,7 @@ int main(int argc, char** argv) {
         max_degree = graph_only->degree(v);
       }
     }
-  } else {
+  } else if (seq_engine) {
     const dgcolor::ValidationResult graph_validation =
         dgcolor::validate_graph_invariants(seq_engine->graph());
     graph_validated = graph_validation.ok;
@@ -219,6 +267,35 @@ int main(int argc, char** argv) {
         max_degree = seq_engine->graph().degree(v);
       }
     }
+  } else {
+    const dgcolor::ValidationResult graph_validation =
+        dgcolor::validate_graph_invariants(par_relaxed_engine->graph());
+    graph_validated = graph_validation.ok;
+    graph_validation_message = graph_validation.message;
+    const dgcolor::ValidationResult color_validation =
+        dgcolor::validate_exact_coloring(par_relaxed_engine->graph(), par_relaxed_engine->colors());
+    coloring_validated = color_validation.ok;
+    coloring_validation_message = color_validation.message;
+    if (coloring_validated) {
+      for (const dgcolor::Color c : par_relaxed_engine->colors()) {
+        if (c >= par_relaxed_engine->palette_size()) {
+          coloring_validated = false;
+          coloring_validation_message = "color out of range for configured relaxed palette";
+          break;
+        }
+      }
+    }
+    final_edges = par_relaxed_engine->graph().num_edges();
+    for (dgcolor::VertexId v = 0; v < par_relaxed_engine->graph().num_vertices(); ++v) {
+      if (par_relaxed_engine->graph().degree(v) > max_degree) {
+        max_degree = par_relaxed_engine->graph().degree(v);
+      }
+    }
+    palette_multiplier_out = par_relaxed_engine->palette_multiplier();
+    palette_size_out = par_relaxed_engine->palette_size();
+    max_rounds_out = par_relaxed_engine->max_rounds();
+    total_rounds_out = par_relaxed_engine->total_rounds();
+    fallback_count_out = par_relaxed_engine->fallback_count();
   }
   const double validate_seconds = SecondsSince(validate_start);
 
@@ -245,6 +322,13 @@ int main(int argc, char** argv) {
   if (!graph_only) {
     PrintMetric("coloring_validated", coloring_validated ? 1 : 0);
     PrintMetric("vertices_touched_total", vertices_touched_total);
+  }
+  if (par_relaxed_engine) {
+    PrintMetric("palette_multiplier", palette_multiplier_out);
+    PrintMetric("palette_size", palette_size_out);
+    PrintMetric("max_rounds", max_rounds_out);
+    PrintMetric("total_rounds", total_rounds_out);
+    PrintMetric("fallback_count", fallback_count_out);
   }
 
   if (!graph_validated) {

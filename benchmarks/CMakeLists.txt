@@ -1,6 +1,7 @@
 add_executable(bench_smoke
   bench_smoke.cpp
   ../src/graph_store.cpp
+  ../src/par_relaxed_engine.cpp
   ../src/rng.cpp
   ../src/seq_baseline_engine.cpp
   ../src/validator.cpp
