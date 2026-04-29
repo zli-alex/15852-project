@@ -1,5 +1,6 @@
 #include <cassert>
 #include <stdexcept>
+#include <vector>
 
 #include "dgcolor/par_relaxed_engine.hpp"
 #include "dgcolor/validator.hpp"
@@ -32,6 +33,8 @@ void AssertColorRange(const ParRelaxedEngine& engine) {
 }
 
 void AssertInitializedColoringValid(const ParRelaxedEngine& engine) {
+  const auto graph_validation = dgcolor::validate_graph_invariants(engine.graph());
+  assert(graph_validation.ok);
   const auto validation = dgcolor::validate_exact_coloring(engine.graph(), engine.colors());
   assert(validation.ok);
   AssertColorRange(engine);
@@ -182,13 +185,16 @@ void TestApplyUpdateBeforeInitializeThrows() {
 void TestInsertionWithoutConflict() {
   ParRelaxedEngine engine(4, 3, 1, 2, 8);
   engine.initialize_coloring();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
+  const auto touched_before = engine.vertices_touched_total();
 
   const UpdateStats stats = engine.apply_update(Insert(0, 1));
-  AssertStatsApplied(stats, 4);
+  AssertStatsApplied(stats, 0);
   AssertInitializedColoringValid(engine);
-  assert(engine.total_rounds() == 0);
-  assert(engine.fallback_count() == 0);
-  assert(engine.vertices_touched_total() == 8);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
+  assert(engine.vertices_touched_total() == touched_before);
 }
 
 void TestInsertionWithConflictRequiresRecolor() {
@@ -198,26 +204,39 @@ void TestInsertionWithConflictRequiresRecolor() {
   ParRelaxedEngine engine(3, 2, 1, 2, 8, edges);
   engine.initialize_coloring();
   const auto before = engine.colors();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
+  const auto touched_before = engine.vertices_touched_total();
 
   const UpdateStats stats = engine.apply_update(Insert(0, 2));
-  AssertStatsApplied(stats, 3);
+  assert(stats.applied);
+  assert(stats.edges_changed == 1);
+  assert(stats.vertices_touched >= 1);
+  assert(stats.seconds >= 0.0);
   AssertInitializedColoringValid(engine);
 
   const auto after = engine.colors();
   assert(before != after);
-  assert(engine.vertices_touched_total() == 6);
+  assert(engine.total_rounds() >= rounds_before);
+  assert(engine.fallback_count() >= fallbacks_before);
+  assert(engine.vertices_touched_total() >= touched_before + stats.vertices_touched);
 }
 
 void TestDeletionPreservesValidityAndColors() {
   ParRelaxedEngine engine(5, 3, 1, 2, 8, PathEdges());
   engine.initialize_coloring();
   const auto before = engine.colors();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
+  const auto touched_before = engine.vertices_touched_total();
 
   const UpdateStats stats = engine.apply_update(Delete(2, 3));
   AssertStatsApplied(stats, 0);
   AssertInitializedColoringValid(engine);
   assert(engine.colors() == before);
-  assert(engine.vertices_touched_total() == 5);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
+  assert(engine.vertices_touched_total() == touched_before);
 }
 
 void TestRejectedLoopInsertionStable() {
@@ -225,11 +244,15 @@ void TestRejectedLoopInsertionStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
 
   const UpdateStats stats = engine.apply_update(Insert(1, 1));
   AssertStatsRejected(stats);
   assert(engine.graph().num_edges() == edges_before);
   assert(engine.colors() == before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
 void TestRejectedDuplicateInsertionStable() {
@@ -237,11 +260,15 @@ void TestRejectedDuplicateInsertionStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
 
   const UpdateStats stats = engine.apply_update(Insert(1, 2));
   AssertStatsRejected(stats);
   assert(engine.graph().num_edges() == edges_before);
   assert(engine.colors() == before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
 void TestRejectedMissingDeletionStable() {
@@ -249,11 +276,15 @@ void TestRejectedMissingDeletionStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
 
   const UpdateStats stats = engine.apply_update(Delete(0, 4));
   AssertStatsRejected(stats);
   assert(engine.graph().num_edges() == edges_before);
   assert(engine.colors() == before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
 void TestRejectedDegreeCapInsertionStable() {
@@ -265,11 +296,15 @@ void TestRejectedDegreeCapInsertionStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
 
   const UpdateStats stats = engine.apply_update(Insert(0, 3));
   AssertStatsRejected(stats);
   assert(engine.graph().num_edges() == edges_before);
   assert(engine.colors() == before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
 void TestApplyBatchBeforeInitializeThrows() {
@@ -292,10 +327,14 @@ void TestAcceptedInsertionBatch() {
   batch.push_back(Insert(0, 1));
   batch.push_back(Insert(2, 3));
 
+  const auto touched_before = engine.vertices_touched_total();
   const BatchStats stats = engine.apply_batch(batch);
-  AssertBatchStatsApplied(stats, 2, 2, 5);
+  assert(stats.applied);
+  assert(stats.updates == 2);
+  assert(stats.edges_changed == 2);
+  assert(stats.vertices_touched == 0);
   AssertInitializedColoringValid(engine);
-  assert(engine.vertices_touched_total() == 10);
+  assert(engine.vertices_touched_total() == touched_before);
 }
 
 void TestAcceptedMixedInsertDeleteBatch() {
@@ -306,7 +345,10 @@ void TestAcceptedMixedInsertDeleteBatch() {
   batch.push_back(Insert(0, 4));
 
   const BatchStats stats = engine.apply_batch(batch);
-  AssertBatchStatsApplied(stats, 2, 2, 5);
+  assert(stats.applied);
+  assert(stats.updates == 2);
+  assert(stats.edges_changed == 2);
+  assert(stats.vertices_touched >= 1);
   AssertInitializedColoringValid(engine);
 }
 
@@ -321,7 +363,10 @@ void TestAcceptedConflictBatchRequiresRecolor() {
   UpdateBatch batch;
   batch.push_back(Insert(0, 2));
   const BatchStats stats = engine.apply_batch(batch);
-  AssertBatchStatsApplied(stats, 1, 1, 3);
+  assert(stats.applied);
+  assert(stats.updates == 1);
+  assert(stats.edges_changed == 1);
+  assert(stats.vertices_touched >= 1);
   AssertInitializedColoringValid(engine);
   assert(engine.colors() != before);
 }
@@ -331,6 +376,8 @@ void TestRejectedDuplicateSameBatchEdgeStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
   UpdateBatch batch;
   batch.push_back(Insert(0, 1));
   batch.push_back(Insert(1, 0));
@@ -339,6 +386,8 @@ void TestRejectedDuplicateSameBatchEdgeStable() {
   AssertBatchStatsRejected(stats, 2);
   assert(engine.colors() == before);
   assert(engine.graph().num_edges() == edges_before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
 void TestRejectedLoopBatchStable() {
@@ -346,6 +395,8 @@ void TestRejectedLoopBatchStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
   UpdateBatch batch;
   batch.push_back(Insert(2, 2));
 
@@ -353,6 +404,8 @@ void TestRejectedLoopBatchStable() {
   AssertBatchStatsRejected(stats, 1);
   assert(engine.colors() == before);
   assert(engine.graph().num_edges() == edges_before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
 void TestRejectedDegreeCapBatchStable() {
@@ -364,6 +417,8 @@ void TestRejectedDegreeCapBatchStable() {
   engine.initialize_coloring();
   const auto before = engine.colors();
   const std::size_t edges_before = engine.graph().num_edges();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
   UpdateBatch batch;
   batch.push_back(Insert(0, 3));
 
@@ -371,16 +426,52 @@ void TestRejectedDegreeCapBatchStable() {
   AssertBatchStatsRejected(stats, 1);
   assert(engine.colors() == before);
   assert(engine.graph().num_edges() == edges_before);
+  assert(engine.total_rounds() == rounds_before);
+  assert(engine.fallback_count() == fallbacks_before);
 }
 
-void TestBatchStep3StatsRemainFallbackOnly() {
-  ParRelaxedEngine engine(4, 3, 1, 2, 8);
+void TestMaxRoundsOneStillPreservesCorrectness() {
+  UpdateBatch edges;
+  edges.push_back(Insert(0, 1));
+  edges.push_back(Insert(1, 2));
+  ParRelaxedEngine engine(3, 2, 1, 2, 1, edges);
   engine.initialize_coloring();
+  const auto rounds_before = engine.total_rounds();
+  const auto fallbacks_before = engine.fallback_count();
+  const UpdateStats stats = engine.apply_update(Insert(0, 2));
+  assert(stats.applied);
+  AssertInitializedColoringValid(engine);
+  assert(engine.total_rounds() >= rounds_before + 1);
+  assert(engine.fallback_count() >= fallbacks_before);
+}
+
+void TestRepeatedSameSeedDeterminism() {
+  const UpdateBatch initial = PathEdges();
+  ParRelaxedEngine a(8, 4, 12345, 4, 4, initial);
+  ParRelaxedEngine b(8, 4, 12345, 4, 4, initial);
+  a.initialize_coloring();
+  b.initialize_coloring();
+
+  std::vector<EdgeUpdate> updates = {Insert(0, 4), Delete(1, 2), Insert(2, 6), Insert(3, 7)};
+  for (const auto& u : updates) {
+    const auto sa = a.apply_update(u);
+    const auto sb = b.apply_update(u);
+    assert(sa.applied == sb.applied);
+    assert(sa.edges_changed == sb.edges_changed);
+  }
   UpdateBatch batch;
-  batch.push_back(Insert(0, 1));
-  (void)engine.apply_batch(batch);
-  assert(engine.total_rounds() == 0);
-  assert(engine.fallback_count() == 0);
+  batch.push_back(Insert(1, 7));
+  batch.push_back(Delete(0, 1));
+  batch.push_back(Insert(0, 2));
+  const auto ba = a.apply_batch(batch);
+  const auto bb = b.apply_batch(batch);
+  assert(ba.applied == bb.applied);
+  assert(ba.edges_changed == bb.edges_changed);
+
+  assert(a.colors() == b.colors());
+  assert(a.total_rounds() == b.total_rounds());
+  assert(a.fallback_count() == b.fallback_count());
+  assert(a.vertices_touched_total() == b.vertices_touched_total());
 }
 
 }  // namespace
@@ -408,6 +499,7 @@ int main() {
   TestRejectedDuplicateSameBatchEdgeStable();
   TestRejectedLoopBatchStable();
   TestRejectedDegreeCapBatchStable();
-  TestBatchStep3StatsRemainFallbackOnly();
+  TestMaxRoundsOneStillPreservesCorrectness();
+  TestRepeatedSameSeedDeterminism();
   return 0;
 }

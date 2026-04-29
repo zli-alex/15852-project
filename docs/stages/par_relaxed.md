@@ -299,3 +299,40 @@ Stage is complete when all are true on Linux cluster:
 - Reported validations show `graph_validated=1` and `coloring_validated=1`.
 - Rejected updates/batches preserve graph and coloring state.
 - No project-code changes are introduced solely to work around macOS SDK header/toolchain issues.
+
+## 18. Step 5 checkpoint (current state)
+
+### Completed through Step 5
+
+- `ParRelaxedEngine` is implemented with correctness-first behavior for:
+  - initialization
+  - `apply_update`
+  - `apply_batch`
+- `par_relaxed` unit tests and deterministic fuzz tests are integrated.
+- Benchmark integration is complete in `bench_smoke` with `--engine par_relaxed`.
+
+### Current PAR-Relaxed behavior (intentional for this stage)
+
+- The engine currently uses full relaxed greedy recoloring after accepted updates/batches as a correctness-first baseline.
+- True phase-separated parallel rounds are not implemented yet.
+- `total_rounds=0` and `fallback_count=0` are expected placeholders until the parallel-round step.
+
+### Benchmark/CLI coverage now available
+
+- `bench_smoke` supports:
+  - `--engine par_relaxed`
+  - `--palette-multiplier <c>`
+  - `--c <c>` (alias)
+  - `--max-rounds <rounds>`
+- Benchmark modes covered in smoke runs:
+  - `graph_store_only`
+  - `seq_baseline`
+  - `par_relaxed` with `c in {2,4,8}` and batch sizes `1` and `4`
+- Conservative batch rejection remains expected behavior (for example duplicate undirected edge in the same batch can reject the whole batch).
+
+### Linux smoke/result checkpoint
+
+- Smoke script: `scripts/run_par_relaxed_smoke.sh`
+- Recorded Linux smoke outcome:
+  - `run_complete=1`
+  - `100% tests passed, 0 tests failed out of 10`

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "dgcolor/coloring_engine.hpp"
 
@@ -37,6 +38,15 @@ class ParRelaxedEngine final : public ColoringEngine {
   Color greedy_color_for_vertex(VertexId v) const;
   void recolor_all_greedy_relaxed();
   static Color compute_palette_size(Degree delta_cap, std::uint32_t palette_multiplier);
+  Color deterministic_proposal_color(VertexId v, std::uint64_t round_index) const;
+  std::vector<VertexId> expand_with_neighbors(const std::vector<VertexId>& seeds) const;
+  std::vector<VertexId> conflicted_vertices_from_candidates(
+      const std::vector<VertexId>& candidates) const;
+  bool attempt_parallel_repair(const std::vector<VertexId>& initial_active,
+                               std::size_t* vertices_touched, std::uint64_t* rounds_attempted);
+  std::vector<VertexId> initial_active_from_update(const EdgeUpdate& update) const;
+  std::vector<VertexId> initial_active_from_batch(const UpdateBatch& batch) const;
+  void validate_coloring_or_throw(const char* context) const;
 
   AdjacencyGraphStore graph_;
   parlay::sequence<Color> colors_;
