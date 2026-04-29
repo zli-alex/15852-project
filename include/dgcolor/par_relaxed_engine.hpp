@@ -46,6 +46,8 @@ class ParRelaxedEngine final : public ColoringEngine {
   std::vector<VertexId> expand_with_neighbors(const std::vector<VertexId>& seeds) const;
   std::vector<VertexId> collect_conflicted_vertices_from_candidates(
       const std::vector<VertexId>& candidates) const;
+  bool attempt_parallel_repair(const std::vector<VertexId>& initial_active,
+                               std::size_t* vertices_touched, std::uint64_t* rounds_attempted);
   void validate_coloring_or_throw(const char* context) const;
 
   AdjacencyGraphStore graph_;

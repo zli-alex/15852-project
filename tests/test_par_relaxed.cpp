@@ -189,6 +189,8 @@ void TestInsertionWithoutConflict() {
   const auto touched_before = engine.vertices_touched_total();
 
   const UpdateStats stats = engine.apply_update(Insert(0, 1));
+  // Step 6A has not wired repair rounds yet, so accepted insertions still full-recolor.
+  // Do not change this expectation back to 0 before Step 6C wires repair into apply_update().
   AssertStatsApplied(stats, 4);
   AssertInitializedColoringValid(engine);
   assert(engine.total_rounds() == rounds_before);
@@ -320,6 +322,8 @@ void TestAcceptedInsertionBatch() {
 
   const auto touched_before = engine.vertices_touched_total();
   const BatchStats stats = engine.apply_batch(batch);
+  // Step 6A has not wired repair rounds yet, so accepted batches still full-recolor.
+  // Do not change this expectation back to 0 before Step 6D wires repair into apply_batch().
   AssertBatchStatsApplied(stats, 2, 2, 5);
   AssertInitializedColoringValid(engine);
   assert(engine.vertices_touched_total() == touched_before + 5);

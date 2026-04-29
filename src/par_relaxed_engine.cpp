@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include <parlay/parallel.h>
+
 #include "dgcolor/validator.hpp"
 
 namespace dgcolor {
@@ -248,6 +250,90 @@ std::vector<VertexId> ParRelaxedEngine::collect_conflicted_vertices_from_candida
     }
   }
   return conflicted;
+}
+
+bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& initial_active,
+                                               std::size_t* vertices_touched,
+                                               std::uint64_t* rounds_attempted) {
+  std::vector<VertexId> active = collect_conflicted_vertices_from_candidates(initial_active);
+  if (active.empty()) {
+    return true;
+  }
+
+  for (std::uint64_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
+    if (rounds_attempted != nullptr) {
+      ++(*rounds_attempted);
+    }
+    if (vertices_touched != nullptr) {
+      *vertices_touched += active.size();
+    }
+
+    const VertexId n = graph_.num_vertices();
+    std::vector<int> active_index(n, -1);
+    for (std::size_t i = 0; i < active.size(); ++i) {
+      active_index[active[i]] = static_cast<int>(i);
+    }
+
+    std::vector<Color> proposed(active.size(), kUncolored);
+    std::vector<unsigned char> safe(active.size(), 0);
+
+    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+      const VertexId v = active[i];
+      const Color offset = deterministic_color_offset(round, v);
+      for (Color attempt = 0; attempt < palette_size_; ++attempt) {
+        const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
+        bool available = true;
+        const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+        for (VertexId u : nbrs) {
+          if (colors_[u] == candidate) {
+            available = false;
+            break;
+          }
+        }
+        if (available) {
+          proposed[i] = candidate;
+          return;
+        }
+      }
+    });
+
+    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+      const VertexId v = active[i];
+      const Color candidate = proposed[i];
+      if (!color_in_palette_range(candidate)) {
+        return;
+      }
+
+      bool ok = true;
+      const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+      for (VertexId u : nbrs) {
+        if (colors_[u] == candidate) {
+          ok = false;
+          break;
+        }
+
+        const int j = active_index[u];
+        if (j >= 0 && proposed[static_cast<std::size_t>(j)] == candidate && u < v) {
+          // Conservative deterministic tie-break: for adjacent active vertices
+          // proposing the same color, only the lower vertex id may commit.
+          ok = false;
+          break;
+        }
+      }
+      safe[i] = ok ? 1 : 0;
+    });
+
+    parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+      if (safe[i]) {
+        colors_[active[i]] = proposed[i];
+      }
+    });
+
+    const std::vector<VertexId> expanded = expand_with_neighbors(active);
+    active = collect_conflicted_vertices_from_candidates(expanded);
+  }
+
+  return active.empty();
 }
 
 void ParRelaxedEngine::validate_coloring_or_throw(const char* context) const {
