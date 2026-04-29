@@ -72,9 +72,10 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
       }
     } else if (arg == "--workload" && i + 1 < argc) {
       cfg->workload = argv[++i];
-      if (cfg->workload != "random_attempts" && cfg->workload != "valid_insertions") {
+      if (cfg->workload != "random_attempts" && cfg->workload != "valid_insertions" &&
+          cfg->workload != "mixed_valid") {
         throw std::invalid_argument(
-            "invalid --workload (expected random_attempts|valid_insertions)");
+            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid)");
       }
     } else if (arg == "--seed" && i + 1 < argc) {
       std::uint64_t v = 0;
@@ -164,8 +165,9 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
   if (cfg->max_generation_attempts == 0) {
     cfg->max_generation_attempts = cfg->updates * 100;
   }
-  if (cfg->workload == "valid_insertions" && cfg->batch_size > 1) {
-    throw std::invalid_argument("valid_insertions currently supports batch_size=1 only");
+  if ((cfg->workload == "valid_insertions" || cfg->workload == "mixed_valid") &&
+      cfg->batch_size > 1) {
+    throw std::invalid_argument(cfg->workload + " currently supports batch_size=1 only");
   }
 }
 
@@ -191,6 +193,14 @@ std::uint64_t EdgeKey(dgcolor::VertexId a, dgcolor::VertexId b) {
   return (static_cast<std::uint64_t>(u) << 32U) | static_cast<std::uint64_t>(v);
 }
 
+dgcolor::VertexId EdgeKeyU(std::uint64_t key) {
+  return static_cast<dgcolor::VertexId>(key >> 32U);
+}
+
+dgcolor::VertexId EdgeKeyV(std::uint64_t key) {
+  return static_cast<dgcolor::VertexId>(key & 0xffffffffULL);
+}
+
 bool GenerateValidInsertion(dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Degree delta_cap,
                             const std::vector<dgcolor::Degree>& degrees,
                             const std::unordered_set<std::uint64_t>& edges,
@@ -208,6 +218,60 @@ bool GenerateValidInsertion(dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Deg
   }
   *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
   return true;
+}
+
+bool FindValidInsertion(dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Degree delta_cap,
+                        const std::vector<dgcolor::Degree>& degrees,
+                        const std::unordered_set<std::uint64_t>& edges,
+                        std::size_t max_generation_attempts, std::size_t* generation_attempts,
+                        std::size_t max_local_attempts, dgcolor::EdgeUpdate* update) {
+  std::size_t local_attempts = 0;
+  while (*generation_attempts < max_generation_attempts && local_attempts < max_local_attempts) {
+    ++(*generation_attempts);
+    ++local_attempts;
+    if (GenerateValidInsertion(rng, n, delta_cap, degrees, edges, update)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool GenerateValidDeletion(dgcolor::Rng* rng, const std::vector<std::uint64_t>& edge_list,
+                           dgcolor::EdgeUpdate* update) {
+  if (edge_list.empty()) {
+    return false;
+  }
+  const std::uint64_t key = edge_list[rng->uniform_index(edge_list.size())];
+  *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Delete, EdgeKeyU(key), EdgeKeyV(key), 0};
+  return true;
+}
+
+void RecordShadowInsertion(const dgcolor::EdgeUpdate& update,
+                           std::vector<dgcolor::Degree>* degrees,
+                           std::unordered_set<std::uint64_t>* edges,
+                           std::vector<std::uint64_t>* edge_list) {
+  const std::uint64_t key = EdgeKey(update.u, update.v);
+  edges->insert(key);
+  edge_list->push_back(key);
+  ++(*degrees)[update.u];
+  ++(*degrees)[update.v];
+}
+
+void RecordShadowDeletion(const dgcolor::EdgeUpdate& update,
+                          std::vector<dgcolor::Degree>* degrees,
+                          std::unordered_set<std::uint64_t>* edges,
+                          std::vector<std::uint64_t>* edge_list) {
+  const std::uint64_t key = EdgeKey(update.u, update.v);
+  edges->erase(key);
+  --(*degrees)[update.u];
+  --(*degrees)[update.v];
+  for (std::size_t i = 0; i < edge_list->size(); ++i) {
+    if ((*edge_list)[i] == key) {
+      (*edge_list)[i] = edge_list->back();
+      edge_list->pop_back();
+      return;
+    }
+  }
 }
 
 void PrintMetric(const std::string& key, const std::string& value) {
@@ -276,7 +340,9 @@ int main(int argc, char** argv) {
   if (cfg.workload == "valid_insertions") {
     std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
     std::unordered_set<std::uint64_t> shadow_edges;
+    std::vector<std::uint64_t> shadow_edge_list;
     shadow_edges.reserve(cfg.updates * 2 + 1);
+    shadow_edge_list.reserve(cfg.updates);
 
     while (updates_generated < cfg.updates && generation_attempts < cfg.max_generation_attempts) {
       ++generation_attempts;
@@ -303,9 +369,68 @@ int main(int argc, char** argv) {
 
       if (update_applied) {
         ++applied;
-        shadow_edges.insert(EdgeKey(update.u, update.v));
-        ++shadow_degrees[update.u];
-        ++shadow_degrees[update.v];
+        RecordShadowInsertion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
+      } else {
+        ++rejected;
+      }
+    }
+  } else if (cfg.workload == "mixed_valid") {
+    std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
+    std::unordered_set<std::uint64_t> shadow_edges;
+    std::vector<std::uint64_t> shadow_edge_list;
+    shadow_edges.reserve(cfg.updates * 2 + 1);
+    shadow_edge_list.reserve(cfg.updates);
+
+    while (updates_generated < cfg.updates && generation_attempts < cfg.max_generation_attempts) {
+      const std::size_t local_insert_attempts = static_cast<std::size_t>(cfg.vertices) * 4 + 16;
+      const bool prefer_insert = rng.bernoulli(cfg.insert_ratio);
+      dgcolor::EdgeUpdate update{};
+      bool generated = false;
+
+      if (prefer_insert) {
+        generated = FindValidInsertion(&rng, cfg.vertices, cfg.delta_cap, shadow_degrees,
+                                       shadow_edges, cfg.max_generation_attempts,
+                                       &generation_attempts, local_insert_attempts, &update);
+        if (!generated && generation_attempts < cfg.max_generation_attempts) {
+          ++generation_attempts;
+          generated = GenerateValidDeletion(&rng, shadow_edge_list, &update);
+        }
+      } else {
+        ++generation_attempts;
+        generated = GenerateValidDeletion(&rng, shadow_edge_list, &update);
+        if (!generated) {
+          generated = FindValidInsertion(&rng, cfg.vertices, cfg.delta_cap, shadow_degrees,
+                                         shadow_edges, cfg.max_generation_attempts,
+                                         &generation_attempts, local_insert_attempts, &update);
+        }
+      }
+
+      if (!generated) {
+        break;
+      }
+
+      ++updates_generated;
+      bool update_applied = false;
+      if (graph_only) {
+        const dgcolor::UpdateResult result = graph_only->apply_update(update);
+        update_applied = (result.status == dgcolor::UpdateStatus::Ok);
+      } else if (seq_engine) {
+        const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
+      } else {
+        const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
+      }
+
+      if (update_applied) {
+        ++applied;
+        if (update.kind == dgcolor::UpdateKind::Insert) {
+          RecordShadowInsertion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
+        } else {
+          RecordShadowDeletion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
+        }
       } else {
         ++rejected;
       }
