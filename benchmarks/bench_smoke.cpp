@@ -170,9 +170,6 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
       cfg->batch_size > 1) {
     throw std::invalid_argument(cfg->workload + " currently supports batch_size=1 only");
   }
-  if (cfg->workload == "conflict_heavy" && cfg->batch_size > 1) {
-    throw std::invalid_argument("conflict_heavy currently supports batch_size=1 only");
-  }
   if (cfg->workload == "conflict_heavy" && cfg->engine == "graph_store_only") {
     throw std::invalid_argument("conflict_heavy currently supports seq_baseline|par_relaxed only");
   }
@@ -251,6 +248,36 @@ bool GenerateValidBatchInsertion(dgcolor::Rng* rng, dgcolor::VertexId n,
     return false;
   }
 
+  *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
+  return true;
+}
+
+bool GenerateConflictHeavyBatchInsertion(
+    dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Degree delta_cap,
+    const std::vector<dgcolor::Degree>& degrees,
+    const std::unordered_set<std::uint64_t>& existing_edges,
+    const std::vector<dgcolor::Degree>& pending_degrees,
+    const std::unordered_set<std::uint64_t>& batch_edges,
+    const parlay::sequence<dgcolor::Color>& colors, std::size_t* generator_same_color_attempts,
+    dgcolor::EdgeUpdate* update) {
+  ++(*generator_same_color_attempts);
+  const dgcolor::VertexId u = rng->uniform_vertex(n);
+  const dgcolor::VertexId v = rng->uniform_vertex(n);
+  if (u == v) {
+    return false;
+  }
+  if (colors[u] != colors[v]) {
+    return false;
+  }
+  const std::uint64_t key = EdgeKey(u, v);
+  if (existing_edges.find(key) != existing_edges.end() ||
+      batch_edges.find(key) != batch_edges.end()) {
+    return false;
+  }
+  if (degrees[u] + pending_degrees[u] >= delta_cap ||
+      degrees[v] + pending_degrees[v] >= delta_cap) {
+    return false;
+  }
   *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
   return true;
 }
@@ -368,6 +395,8 @@ int main(int argc, char** argv) {
   std::size_t final_edges = 0;
   std::size_t applied = 0;
   std::size_t rejected = 0;
+  std::size_t batches_generated = 0;
+  std::size_t batches_applied = 0;
   std::size_t generator_same_color_attempts = 0;
   std::size_t generator_same_color_chosen = 0;
   std::size_t generator_same_color_fallbacks = 0;
@@ -444,7 +473,7 @@ int main(int argc, char** argv) {
         ++rejected;
       }
     }
-  } else if (cfg.workload == "conflict_heavy") {
+  } else if (cfg.workload == "conflict_heavy" && cfg.batch_size <= 1) {
     std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
     std::unordered_set<std::uint64_t> shadow_edges;
     std::vector<std::uint64_t> shadow_edge_list;
@@ -493,6 +522,102 @@ int main(int argc, char** argv) {
         RecordShadowInsertion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
       } else {
         ++rejected;
+      }
+    }
+  } else if (cfg.workload == "conflict_heavy") {
+    std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
+    std::unordered_set<std::uint64_t> shadow_edges;
+    std::vector<std::uint64_t> shadow_edge_list;
+    shadow_edges.reserve(cfg.updates * 2 + 1);
+    shadow_edge_list.reserve(cfg.updates);
+
+    while (updates_generated < cfg.updates && generation_attempts < cfg.max_generation_attempts) {
+      const std::size_t remaining_updates = cfg.updates - updates_generated;
+      const std::size_t target_batch_size =
+          (cfg.batch_size < remaining_updates) ? cfg.batch_size : remaining_updates;
+      const std::size_t local_same_color_attempts =
+          (static_cast<std::size_t>(cfg.vertices) * 4 + 16) * target_batch_size;
+      const std::size_t local_fallback_attempts =
+          (static_cast<std::size_t>(cfg.vertices) * 4 + 16) * target_batch_size;
+
+      dgcolor::UpdateBatch batch;
+      batch.reserve(target_batch_size);
+      std::vector<dgcolor::Degree> pending_degrees(cfg.vertices, 0);
+      std::unordered_set<std::uint64_t> batch_edges;
+      batch_edges.reserve(target_batch_size * 2 + 1);
+      const parlay::sequence<dgcolor::Color> colors_snapshot =
+          seq_engine ? seq_engine->colors() : par_relaxed_engine->colors();
+
+      std::size_t same_color_attempts_local = 0;
+      while (batch.size() < target_batch_size &&
+             generation_attempts < cfg.max_generation_attempts &&
+             same_color_attempts_local < local_same_color_attempts) {
+        ++generation_attempts;
+        ++same_color_attempts_local;
+        dgcolor::EdgeUpdate update{};
+        if (!GenerateConflictHeavyBatchInsertion(
+                &rng, cfg.vertices, cfg.delta_cap, shadow_degrees, shadow_edges, pending_degrees,
+                batch_edges, colors_snapshot, &generator_same_color_attempts, &update)) {
+          continue;
+        }
+        ++generator_same_color_chosen;
+        batch.push_back(update);
+        batch_edges.insert(EdgeKey(update.u, update.v));
+        ++pending_degrees[update.u];
+        ++pending_degrees[update.v];
+      }
+
+      std::size_t fallback_attempts_local = 0;
+      bool used_fallback = false;
+      while (batch.size() < target_batch_size &&
+             generation_attempts < cfg.max_generation_attempts &&
+             fallback_attempts_local < local_fallback_attempts) {
+        ++generation_attempts;
+        ++fallback_attempts_local;
+        dgcolor::EdgeUpdate update{};
+        if (!GenerateValidBatchInsertion(&rng, cfg.vertices, cfg.delta_cap, shadow_degrees,
+                                         shadow_edges, pending_degrees, batch_edges, &update)) {
+          continue;
+        }
+        used_fallback = true;
+        batch.push_back(update);
+        batch_edges.insert(EdgeKey(update.u, update.v));
+        ++pending_degrees[update.u];
+        ++pending_degrees[update.v];
+      }
+
+      if (used_fallback) {
+        ++generator_same_color_fallbacks;
+      }
+      if (batch.empty()) {
+        break;
+      }
+
+      ++batches_generated;
+      updates_generated += batch.size();
+      bool batch_ok = false;
+      std::size_t edges_changed = 0;
+      if (seq_engine) {
+        const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        batch_ok = stats.applied;
+        edges_changed = stats.edges_changed;
+        vertices_touched_total += stats.vertices_touched;
+      } else {
+        const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
+        batch_ok = stats.applied;
+        edges_changed = stats.edges_changed;
+        vertices_touched_total += stats.vertices_touched;
+      }
+
+      if (batch_ok) {
+        ++batches_applied;
+        applied += edges_changed;
+        rejected += (batch.size() - edges_changed);
+        for (const dgcolor::EdgeUpdate& update : batch) {
+          RecordShadowInsertion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
+        }
+      } else {
+        rejected += batch.size();
       }
     }
   } else if (cfg.workload == "mixed_valid") {
@@ -775,6 +900,8 @@ int main(int argc, char** argv) {
       (update_seconds > 0.0) ? (static_cast<double>(cfg.updates) / update_seconds) : 0.0;
   const double accepted_ratio =
       (updates_generated > 0) ? (static_cast<double>(applied) / updates_generated) : 0.0;
+  const double batch_accepted_ratio =
+      (batches_generated > 0) ? (static_cast<double>(batches_applied) / batches_generated) : 0.0;
 
   PrintMetric("benchmark_name", "foundation_smoke");
   PrintMetric("engine_name", cfg.engine);
@@ -788,6 +915,9 @@ int main(int argc, char** argv) {
   PrintMetric("updates_applied", applied);
   PrintMetric("updates_rejected", rejected);
   PrintMetric("accepted_ratio", accepted_ratio);
+  PrintMetric("batches_generated", batches_generated);
+  PrintMetric("batches_applied", batches_applied);
+  PrintMetric("batch_accepted_ratio", batch_accepted_ratio);
   PrintMetric("generator_same_color_attempts", generator_same_color_attempts);
   PrintMetric("generator_same_color_chosen", generator_same_color_chosen);
   PrintMetric("generator_same_color_fallbacks", generator_same_color_fallbacks);
