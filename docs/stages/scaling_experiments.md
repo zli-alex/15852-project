@@ -1,0 +1,189 @@
+# Scaling Experiments
+
+## Goal
+
+This stage adds baseline synthetic scaling probes for the current implemented benchmark workloads. The scripts are intended to produce repeatable Linux-cluster logs for early `PAR-Relaxed` scaling checks, not final performance claims.
+
+Implemented workload coverage:
+
+- `batch_valid`
+- `valid_insertions`
+- `mixed_valid`
+- `random_attempts` as the rejection-stress control
+
+The initial scripts focus on `batch_valid` because it gives accepted insertion batches for `batch_size=16`, avoiding the rejection-heavy behavior of `random_attempts`.
+
+## Scripts
+
+### `scripts/run_synthetic_c_sweep.sh`
+
+Runs a palette multiplier sweep for `par_relaxed`:
+
+- configures and builds Release,
+- runs full CTest before benchmarking,
+- writes logs under `logs/scaling/`,
+- logs `date`, `host`, and `git_commit`,
+- sets `PARLAY_NUM_THREADS=1`,
+- runs `batch_valid` with:
+  - `--vertices 10000`
+  - `--updates 10000`
+  - `--delta-cap 32`
+  - `--batch-size 16`
+  - `--max-rounds 4`
+  - `--diagnostics 1`
+- sweeps `c in {2,4,8,16}`,
+- runs seeds `1 2 3` by default.
+
+Run:
+
+```bash
+./scripts/run_synthetic_c_sweep.sh
+```
+
+For a smaller smoke run:
+
+```bash
+VERTICES=1000 UPDATES=1000 SEEDS=1 C_VALUES="2 4" ./scripts/run_synthetic_c_sweep.sh
+```
+
+### `scripts/run_synthetic_thread_sweep.sh`
+
+Runs a Parlay thread-count sweep for `par_relaxed`:
+
+- configures and builds Release,
+- runs full CTest before benchmarking,
+- writes logs under `logs/scaling/`,
+- logs `date`, `host`, and `git_commit`,
+- runs `batch_valid` with:
+  - `--vertices 10000`
+  - `--updates 10000`
+  - `--delta-cap 32`
+  - `--batch-size 16`
+  - `--c 4`
+  - `--max-rounds 4`
+  - `--diagnostics 1`
+- sweeps `PARLAY_NUM_THREADS in {1,2,4,8,16}`.
+
+Run:
+
+```bash
+./scripts/run_synthetic_thread_sweep.sh
+```
+
+For a smaller smoke run:
+
+```bash
+VERTICES=1000 UPDATES=1000 THREAD_VALUES="1 2" ./scripts/run_synthetic_thread_sweep.sh
+```
+
+Thread scaling may be masked if `sequential_repair_rounds / repair_rounds` is near `1`, because tiny repair sets intentionally use the sequential repair fast path.
+
+## Parser
+
+`scripts/parse_bench_kv.awk` converts key/value benchmark logs into CSV.
+
+Example:
+
+```bash
+awk -f scripts/parse_bench_kv.awk logs/scaling/synthetic_c_sweep_*.log > logs/scaling/c_sweep.csv
+awk -f scripts/parse_bench_kv.awk logs/scaling/synthetic_thread_sweep_*.log > logs/scaling/thread_sweep.csv
+```
+
+CSV columns include:
+
+- `host`
+- `date`
+- `git_commit`
+- `parlay_threads`
+- `engine_name`
+- `workload`
+- `seed`
+- `num_vertices`
+- `delta_cap`
+- `batch_size`
+- `palette_multiplier`
+- `updates_generated`
+- `updates_applied`
+- `accepted_ratio`
+- `update_seconds`
+- `throughput_updates_per_second`
+- `repair_seconds`
+- `repair_calls`
+- `sequential_repair_calls`
+- `sequential_repair_rounds`
+- `total_rounds`
+- `fallback_count`
+- `vertices_touched_total`
+- `neighbor_scans`
+- `commits_total`
+- `graph_validated`
+- `coloring_validated`
+
+## How to Interpret Results
+
+### C sweep
+
+The c sweep asks whether the relaxed palette multiplier changes runtime or repair behavior on accepted synthetic batches.
+
+Useful fields:
+
+- `palette_multiplier`
+- `update_seconds`
+- `throughput_updates_per_second`
+- `repair_seconds`
+- `repair_calls`
+- `total_rounds`
+- `fallback_count`
+- `commits_total`
+- `accepted_ratio`
+
+Interpretation caveat:
+
+- Meaningful final c-scaling likely still needs `conflict_heavy`, because `batch_valid` may not create enough same-color insertions to stress repair as `c` changes.
+
+### Thread sweep
+
+The thread sweep asks whether the current accepted-batch workload benefits from more Parlay workers.
+
+Useful fields:
+
+- `parlay_threads`
+- `update_seconds`
+- `throughput_updates_per_second`
+- `repair_seconds`
+- `repair_rounds`
+- `sequential_repair_rounds`
+- `repair_calls`
+
+Interpretation caveat:
+
+- If `sequential_repair_rounds / repair_rounds` is close to `1`, thread scaling is expected to be weak or absent because most repair work bypasses `parallel_for`.
+- Meaningful thread scaling may require workloads where `sequential_repair_rounds / repair_rounds` is below `1`, which likely means larger active repair sets or future `conflict_heavy` workloads.
+
+## Baseline Synthetic Scope
+
+These scripts are a baseline synthetic scaling probe. They are useful for:
+
+- verifying scripts and log parsing,
+- checking accepted-batch throughput,
+- catching major regressions,
+- recording deterministic seed-controlled runs.
+
+They are not a replacement for:
+
+- conflict-heavy repair scaling,
+- real graph datasets,
+- accepted-batch-heavy mixed insert/delete workloads,
+- paper-quality final experiments.
+
+## Validation Policy
+
+Each scaling script runs full CTest before benchmarks. A scaling log should only be used for comparisons if:
+
+- CTest passes,
+- `graph_validated=1`,
+- `coloring_validated=1` for coloring engines,
+- `accepted_ratio` is reported and understood,
+- `git_commit`, `host`, `date`, and `parlay_threads` are present.
+
+Parlay external-header warnings may appear during build and are not currently blocking.
