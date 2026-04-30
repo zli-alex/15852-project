@@ -141,6 +141,12 @@ Notes:
 - `graph_store_only` remains the default mode for backward compatibility.
 - `seq_baseline` is correctness-first and uses full greedy recoloring after accepted insertions and accepted batches.
 - `par_relaxed` is benchmark-selectable via `--engine par_relaxed`.
+- Benchmark workloads currently include:
+  - `random_attempts` (default rejection-stress workload),
+  - `valid_insertions` (`batch_size=1` accepted insertion streams),
+  - `mixed_valid` (`batch_size=1` insert/delete streams where `--insert-ratio` is a preference),
+  - `batch_valid` (accepted insertion-only batches for meaningful `batch_size=4` and `batch_size=16` runs).
+- Future/stretch workloads include `conflict_heavy`, `sparse_stream`, `dense_near_delta`, and `batch_conflict`.
 - `par_relaxed` uses bounded phase-separated repair rounds for accepted insertions/batches and falls back to full relaxed greedy recolor if conflicts remain.
 - `total_rounds`, `fallback_count`, and `vertices_touched_total` are meaningful PAR-Relaxed benchmark metrics.
 - Optional PAR-Relaxed diagnostics are available with `--diagnostics 1`, including repair counters/timers and small-active-set fast-path counters.
@@ -182,4 +188,9 @@ Linux smoke script:
   - full CTest passed: `100% tests passed, 0 tests failed out of 10`
   - total test time around 2.78 seconds
   - medium `batch_size=4` problem case dropped to about `0.0043s update_seconds`
+- Linux validation after benchmark workload additions succeeded:
+  - `batch_valid batch_size=4` applied `1000/1000` updates with `accepted_ratio=1`
+  - `batch_valid batch_size=16` applied `1024/1024` updates with `accepted_ratio=1` for `par_relaxed`
+  - full CTest passed: `100% tests passed, 0 tests failed out of 10`
+  - Parlay external-header warnings may appear during build but are not currently blocking
 - Some local macOS setups may fail with missing standard C++ headers. This is an SDK/toolchain environment issue, not a project logic issue. Linux cluster results are the source of truth.

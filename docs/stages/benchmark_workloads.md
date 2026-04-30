@@ -1,5 +1,26 @@
 # Benchmark Workloads Stage Plan
 
+## Current implementation status
+
+Implemented workloads:
+
+- `random_attempts`: default rejection-stress workload; preserves the original random attempt behavior.
+- `valid_insertions`: accepted insertion streams for `batch_size=1`.
+- `mixed_valid`: single-update insert/delete streams using `--insert-ratio` as a preference, not a hard constraint. If the preferred operation cannot be generated, the generator tries the other operation.
+- `batch_valid`: accepted insertion-only batches. This makes `batch_size=4` and `batch_size=16` meaningful for accepted batch benchmarking.
+
+Current limitations:
+
+- `batch_valid` does not yet implement mixed insert/delete batches.
+- `conflict_heavy`, `sparse_stream`, `dense_near_delta`, and `batch_conflict` remain future/stretch workloads.
+
+Current Linux validation:
+
+- `batch_valid batch_size=4` applies `1000/1000` updates with `accepted_ratio=1`.
+- `batch_valid batch_size=16` applies `1024/1024` updates with `accepted_ratio=1` for `par_relaxed`.
+- Full CTest passes: `100% tests passed, 0 tests failed out of 10`.
+- Parlay external-header warnings may appear during build but are not currently blocking.
+
 ## 1. Goal and non-goals
 
 ### Goal
@@ -52,6 +73,8 @@ Purpose:
 
 Generate insertions that are currently valid under `GraphStore` constraints until `updates_generated` or `target_accepted` is reached, or until saturation.
 
+Current implementation supports `batch_size=1`.
+
 Purpose:
 
 - Isolate accepted insertion cost.
@@ -69,6 +92,8 @@ Purpose:
 ### `mixed_valid`
 
 Maintain existing-edge and non-existing-edge pools to produce a mostly valid insert/delete mix according to `--insert-ratio`.
+
+Current implementation supports `batch_size=1`. `--insert-ratio` is a preference rather than a hard guarantee because the generator falls back when the preferred operation is unavailable.
 
 Purpose:
 
@@ -107,6 +132,8 @@ Purpose:
 ### `batch_valid`
 
 Construct batches that are valid under `GraphStore` batch semantics, avoiding duplicate undirected edges, self-loops, degree-cap violations, and conflicting intra-batch updates.
+
+Current implementation is insertion-only. Mixed insert/delete batches are not implemented yet.
 
 Purpose:
 
@@ -495,7 +522,7 @@ Interpretation rules:
 
 Stretch workloads:
 
-- `sparse_stream`, `dense_near_delta`, and `batch_conflict` are stretch workloads.
+- `conflict_heavy`, `sparse_stream`, `dense_near_delta`, and `batch_conflict` are stretch workloads.
 - They are useful for broader coverage, but they should not block the main Benchmark Workloads stage.
 - Implement them only after `random_attempts`, `valid_insertions`, `mixed_valid`, `batch_valid`, and the reduced matrix are stable.
 
@@ -526,15 +553,14 @@ This stage is complete when:
 - `bench_smoke` still supports existing engines: `graph_store_only`, `seq_baseline`, and `par_relaxed`.
 - Default behavior remains compatible with current `random_attempts` smoke runs.
 - Benchmark output includes `workload`, `generation_attempts`, `updates_generated`, and `accepted_ratio`.
-- At least these workloads are implemented:
+- These core workloads are implemented:
   - `random_attempts`,
   - `valid_insertions`,
   - `mixed_valid`,
-  - `batch_valid`,
-  - `conflict_heavy` or a documented first-pass approximation.
+  - `batch_valid`.
 - At least one workload applies nontrivial updates for `batch_size=4` and `batch_size=16`.
 - Deterministic seeds reproduce the same generated stream and results on Linux.
 - Final graph validation and coloring validation still pass.
 - Full CTest passes on Linux.
 - A reduced experiment matrix runs successfully and logs accepted ratios for all runs.
-- Stretch workloads (`sparse_stream`, `dense_near_delta`, `batch_conflict`) are documented but not required for stage completion.
+- Stretch workloads (`conflict_heavy`, `sparse_stream`, `dense_near_delta`, `batch_conflict`) are documented but not required for the current core workload milestone.
