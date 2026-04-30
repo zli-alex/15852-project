@@ -73,9 +73,10 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
     } else if (arg == "--workload" && i + 1 < argc) {
       cfg->workload = argv[++i];
       if (cfg->workload != "random_attempts" && cfg->workload != "valid_insertions" &&
-          cfg->workload != "mixed_valid" && cfg->workload != "batch_valid") {
+          cfg->workload != "mixed_valid" && cfg->workload != "batch_valid" &&
+          cfg->workload != "conflict_heavy") {
         throw std::invalid_argument(
-            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid|batch_valid)");
+            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid|batch_valid|conflict_heavy)");
       }
     } else if (arg == "--seed" && i + 1 < argc) {
       std::uint64_t v = 0;
@@ -169,6 +170,12 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
       cfg->batch_size > 1) {
     throw std::invalid_argument(cfg->workload + " currently supports batch_size=1 only");
   }
+  if (cfg->workload == "conflict_heavy" && cfg->batch_size > 1) {
+    throw std::invalid_argument("conflict_heavy currently supports batch_size=1 only");
+  }
+  if (cfg->workload == "conflict_heavy" && cfg->engine == "graph_store_only") {
+    throw std::invalid_argument("conflict_heavy currently supports seq_baseline|par_relaxed only");
+  }
 }
 
 double SecondsSince(const std::chrono::steady_clock::time_point& start) {
@@ -246,6 +253,38 @@ bool GenerateValidBatchInsertion(dgcolor::Rng* rng, dgcolor::VertexId n,
 
   *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
   return true;
+}
+
+bool FindConflictHeavyInsertion(
+    dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Degree delta_cap,
+    const std::vector<dgcolor::Degree>& degrees, const std::unordered_set<std::uint64_t>& edges,
+    const parlay::sequence<dgcolor::Color>& colors, std::size_t max_generation_attempts,
+    std::size_t* generation_attempts, std::size_t max_local_attempts,
+    std::size_t* generator_same_color_attempts, dgcolor::EdgeUpdate* update) {
+  std::size_t local_attempts = 0;
+  while (*generation_attempts < max_generation_attempts && local_attempts < max_local_attempts) {
+    ++(*generation_attempts);
+    ++local_attempts;
+    ++(*generator_same_color_attempts);
+
+    const dgcolor::VertexId u = rng->uniform_vertex(n);
+    const dgcolor::VertexId v = rng->uniform_vertex(n);
+    if (u == v) {
+      continue;
+    }
+    if (colors[u] != colors[v]) {
+      continue;
+    }
+    if (degrees[u] >= delta_cap || degrees[v] >= delta_cap) {
+      continue;
+    }
+    if (edges.find(EdgeKey(u, v)) != edges.end()) {
+      continue;
+    }
+    *update = dgcolor::EdgeUpdate{dgcolor::UpdateKind::Insert, u, v, 0};
+    return true;
+  }
+  return false;
 }
 
 bool FindValidInsertion(dgcolor::Rng* rng, dgcolor::VertexId n, dgcolor::Degree delta_cap,
@@ -329,6 +368,9 @@ int main(int argc, char** argv) {
   std::size_t final_edges = 0;
   std::size_t applied = 0;
   std::size_t rejected = 0;
+  std::size_t generator_same_color_attempts = 0;
+  std::size_t generator_same_color_chosen = 0;
+  std::size_t generator_same_color_fallbacks = 0;
   std::size_t vertices_touched_total = 0;
   std::uint32_t palette_multiplier_out = 0;
   dgcolor::Color palette_size_out = 0;
@@ -386,6 +428,57 @@ int main(int argc, char** argv) {
         const dgcolor::UpdateResult result = graph_only->apply_update(update);
         update_applied = (result.status == dgcolor::UpdateStatus::Ok);
       } else if (seq_engine) {
+        const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
+      } else {
+        const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
+      }
+
+      if (update_applied) {
+        ++applied;
+        RecordShadowInsertion(update, &shadow_degrees, &shadow_edges, &shadow_edge_list);
+      } else {
+        ++rejected;
+      }
+    }
+  } else if (cfg.workload == "conflict_heavy") {
+    std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
+    std::unordered_set<std::uint64_t> shadow_edges;
+    std::vector<std::uint64_t> shadow_edge_list;
+    shadow_edges.reserve(cfg.updates * 2 + 1);
+    shadow_edge_list.reserve(cfg.updates);
+
+    while (updates_generated < cfg.updates && generation_attempts < cfg.max_generation_attempts) {
+      const std::size_t local_same_color_attempts = static_cast<std::size_t>(cfg.vertices) * 4 + 16;
+      const std::size_t local_fallback_attempts = static_cast<std::size_t>(cfg.vertices) * 4 + 16;
+      parlay::sequence<dgcolor::Color> colors_snapshot =
+          seq_engine ? seq_engine->colors() : par_relaxed_engine->colors();
+
+      dgcolor::EdgeUpdate update{};
+      bool generated = FindConflictHeavyInsertion(
+          &rng, cfg.vertices, cfg.delta_cap, shadow_degrees, shadow_edges, colors_snapshot,
+          cfg.max_generation_attempts, &generation_attempts, local_same_color_attempts,
+          &generator_same_color_attempts, &update);
+
+      if (generated) {
+        ++generator_same_color_chosen;
+      } else {
+        ++generator_same_color_fallbacks;
+        generated = FindValidInsertion(&rng, cfg.vertices, cfg.delta_cap, shadow_degrees,
+                                       shadow_edges, cfg.max_generation_attempts,
+                                       &generation_attempts, local_fallback_attempts, &update);
+      }
+
+      if (!generated) {
+        break;
+      }
+
+      ++updates_generated;
+      bool update_applied = false;
+      if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
@@ -695,6 +788,9 @@ int main(int argc, char** argv) {
   PrintMetric("updates_applied", applied);
   PrintMetric("updates_rejected", rejected);
   PrintMetric("accepted_ratio", accepted_ratio);
+  PrintMetric("generator_same_color_attempts", generator_same_color_attempts);
+  PrintMetric("generator_same_color_chosen", generator_same_color_chosen);
+  PrintMetric("generator_same_color_fallbacks", generator_same_color_fallbacks);
   PrintMetric("batch_size", cfg.batch_size);
   PrintMetric("initial_edges_requested", cfg.initial_edges_requested);
   PrintMetric("initial_edges", initial_edges);
