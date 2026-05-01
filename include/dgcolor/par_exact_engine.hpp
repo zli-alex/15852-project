@@ -27,6 +27,11 @@ struct ParExactDiagnostics {
   std::uint64_t level_diagnostic_vertices{0};
   std::uint64_t active_dense_rebuilds{0};
   std::uint64_t token_repair_calls{0};
+  std::uint64_t token_safe_commits{0};
+  std::uint64_t token_active_conflict_rejections{0};
+  std::uint64_t token_lower_equal_conflict_rejections{0};
+  std::uint64_t token_unique_higher_moves{0};
+  std::uint64_t token_multi_higher_conflicts{0};
   std::uint64_t level_histogram_1{0};
   std::uint64_t level_histogram_2{0};
   std::uint64_t level_histogram_3{0};
@@ -90,6 +95,7 @@ class ParExactEngine final : public ColoringEngine {
   [[maybe_unused]] std::vector<VertexId> collect_conflicted_vertices_from_inserted_edges(
       const UpdateBatch& batch) const;
   [[maybe_unused]] Color first_available_color_with_offset(VertexId v, Color offset) const;
+  [[maybe_unused]] Color first_level_available_color_with_offset(VertexId v, Color offset) const;
   [[maybe_unused]] bool proposal_conflicts_non_active_neighbors(
       VertexId v, Color proposed_color) const;
   [[maybe_unused]] bool proposal_conflicts_active_neighbors(

@@ -220,13 +220,13 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
       for (std::size_t i = 0; i < active.size(); ++i) {
         const VertexId v = active[i];
         const Color offset = deterministic_color_offset(round, v);
-        proposed[i] = first_available_color_with_offset(v, offset);
+        proposed[i] = first_level_available_color_with_offset(v, offset);
       }
     } else {
       parlay::parallel_for(0, active.size(), [&](std::size_t i) {
         const VertexId v = active[i];
         const Color offset = deterministic_color_offset(round, v);
-        proposed[i] = first_available_color_with_offset(v, offset);
+        proposed[i] = first_level_available_color_with_offset(v, offset);
       });
     }
 
@@ -291,15 +291,7 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
       }
     }
 
-    std::vector<VertexId> frontier = active;
-    diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(active.size());
-    for (VertexId v : active) {
-      for (VertexId u : direct_neighbors(v)) {
-        frontier.push_back(u);
-      }
-    }
-    frontier = deduplicate_and_sort_vertices(frontier);
-    active = collect_unresolved_frontier_from_candidates(frontier);
+    active = collect_unresolved_frontier_from_candidates(active);
     unresolved_count_ += static_cast<std::uint64_t>(active.size());
   }
 
@@ -561,6 +553,28 @@ Color ParExactEngine::first_available_color_with_offset(VertexId v, Color offset
   return kUncolored;
 }
 
+Color ParExactEngine::first_level_available_color_with_offset(VertexId v, Color offset) const {
+  const std::size_t palette = palette_size();
+  std::vector<unsigned char> unavailable(palette, 0);
+  for (VertexId u : direct_neighbors(v)) {
+    if (is_active_vertex(u) || levels_[u] > levels_[v]) {
+      continue;
+    }
+    const Color c = colors_[u];
+    if (color_in_palette_range(c)) {
+      unavailable[c] = 1;
+    }
+  }
+
+  for (std::size_t i = 0; i < palette; ++i) {
+    const Color candidate = static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
+    if (!unavailable[candidate]) {
+      return candidate;
+    }
+  }
+  return kUncolored;
+}
+
 bool ParExactEngine::proposal_conflicts_non_active_neighbors(
     VertexId v, Color proposed_color) const {
   if (!color_in_palette_range(proposed_color)) {
@@ -671,6 +685,7 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
 
     std::vector<Color> proposed(active.size(), kUncolored);
     std::vector<unsigned char> safe(active.size(), 0);
+    std::vector<unsigned char> reject_reason(active.size(), 0);
     std::vector<VertexId> next_active;
     proposal_count_ += static_cast<std::uint64_t>(active.size());
     diagnostics_.active_size_round_total += static_cast<std::uint64_t>(active.size());
@@ -684,6 +699,7 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
       ++sequential_fast_path_count_;
       used_sequential = true;
     }
+    diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(active.size());
     if (sequential_path) {
       for (std::size_t i = 0; i < active.size(); ++i) {
         proposed[i] = sampled_level_aware_color(active[i], round);
@@ -706,10 +722,12 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
           const int j = active_vertex_index(u);
           if (j >= 0 && proposed[static_cast<std::size_t>(j)] == c && u < v) {
             conflict = true;
+            reject_reason[i] = 1;
             break;
           }
           if (j < 0 && levels_[u] <= levels_[v] && colors_[u] == c) {
             conflict = true;
+            reject_reason[i] = 2;
             break;
           }
         }
@@ -722,17 +740,38 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
         if (!color_in_palette_range(c)) {
           return;
         }
+        bool active_conflict = false;
+        bool lower_equal_conflict = false;
         for (VertexId u : direct_neighbors(v)) {
           const int j = active_vertex_index(u);
           if (j >= 0 && proposed[static_cast<std::size_t>(j)] == c && u < v) {
-            return;
+            active_conflict = true;
+            break;
           }
           if (j < 0 && levels_[u] <= levels_[v] && colors_[u] == c) {
-            return;
+            lower_equal_conflict = true;
+            break;
           }
+        }
+        if (active_conflict) {
+          reject_reason[i] = 1;
+          return;
+        }
+        if (lower_equal_conflict) {
+          reject_reason[i] = 2;
+          return;
         }
         safe[i] = 1;
       });
+    }
+
+    diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(active.size());
+    for (unsigned char reason : reject_reason) {
+      if (reason == 1) {
+        ++diagnostics_.token_active_conflict_rejections;
+      } else if (reason == 2) {
+        ++diagnostics_.token_lower_equal_conflict_rejections;
+      }
     }
 
     for (std::size_t i = 0; i < active.size(); ++i) {
@@ -746,9 +785,11 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
       ++logical_time_;
       timestamps_[v] = logical_time_;
       ++commit_count_;
+      ++diagnostics_.token_safe_commits;
 
       VertexId unique_higher_conflict = graph_.num_vertices();
       bool multiple_higher_conflicts = false;
+      ++diagnostics_.direct_neighbor_scans;
       for (VertexId u : direct_neighbors(v)) {
         if (levels_[u] <= levels_[v] || colors_[u] != c) {
           continue;
@@ -761,8 +802,10 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
         }
       }
       if (multiple_higher_conflicts) {
+        ++diagnostics_.token_multi_higher_conflicts;
         next_active.push_back(v);
       } else if (unique_higher_conflict != graph_.num_vertices()) {
+        ++diagnostics_.token_unique_higher_moves;
         next_active.push_back(unique_higher_conflict);
       }
     }

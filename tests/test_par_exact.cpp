@@ -426,7 +426,10 @@ void TestExperimentalTokenRepairValidatesWithFallbackSafety() {
 
   const UpdateStats stats = engine.apply_update(Insert(0, 1));
   assert(stats.applied);
-  assert(engine.diagnostics().token_repair_calls >= 1);
+  const auto diagnostics = engine.diagnostics();
+  assert(diagnostics.token_repair_calls >= 1);
+  assert(diagnostics.direct_neighbor_scans > 0);
+  assert(diagnostics.token_safe_commits > 0);
   AssertColoringValid(engine);
 }
 

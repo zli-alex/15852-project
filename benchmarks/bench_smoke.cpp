@@ -1258,6 +1258,12 @@ int main(int argc, char** argv) {
     PrintMetric("level_diagnostic_vertices", diagnostics.level_diagnostic_vertices);
     PrintMetric("active_dense_rebuilds", diagnostics.active_dense_rebuilds);
     PrintMetric("token_repair_calls", diagnostics.token_repair_calls);
+    PrintMetric("token_safe_commits", diagnostics.token_safe_commits);
+    PrintMetric("token_active_conflict_rejections", diagnostics.token_active_conflict_rejections);
+    PrintMetric("token_lower_equal_conflict_rejections",
+                diagnostics.token_lower_equal_conflict_rejections);
+    PrintMetric("token_unique_higher_moves", diagnostics.token_unique_higher_moves);
+    PrintMetric("token_multi_higher_conflicts", diagnostics.token_multi_higher_conflicts);
     PrintMetric("level_histogram_1", diagnostics.level_histogram_1);
     PrintMetric("level_histogram_2", diagnostics.level_histogram_2);
     PrintMetric("level_histogram_3", diagnostics.level_histogram_3);
