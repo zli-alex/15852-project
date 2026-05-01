@@ -99,8 +99,46 @@ UpdateStats SeqExactEngine::apply_update(const EdgeUpdate& update) {
   return UpdateStats{true, 1, vertices_touched, seconds};
 }
 
-BatchStats SeqExactEngine::apply_batch(const UpdateBatch&) {
-  throw std::logic_error("SeqExactEngine::apply_batch is not implemented in Step 2");
+BatchStats SeqExactEngine::apply_batch(const UpdateBatch& batch) {
+  if (!initialized_) {
+    throw std::logic_error("SeqExactEngine::apply_batch requires initialize_coloring() first");
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  const BatchApplyResult result = graph_.apply_batch(batch);
+  if (result.status != UpdateStatus::Ok) {
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return BatchStats{false, batch.size(), 0, 0, seconds};
+  }
+
+  std::vector<VertexId> repair_starts;
+  repair_starts.reserve(batch.size());
+  for (const EdgeUpdate& update : batch) {
+    if (update.kind != UpdateKind::Insert) {
+      continue;
+    }
+    if (colors_[update.u] == colors_[update.v]) {
+      repair_starts.push_back(choose_insertion_recolor_endpoint(update.u, update.v));
+    }
+  }
+
+  std::size_t vertices_touched = 0;
+  for (VertexId start_vertex : repair_starts) {
+    ++recolor_calls_;
+    const bool repaired = local_repair_from_vertex(start_vertex, &vertices_touched);
+    if (!repaired) {
+      ++full_fallback_count_;
+      recolor_all_greedy_exact();
+      vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
+      break;
+    }
+  }
+
+  validate_coloring_or_throw("apply_batch");
+  const auto end = std::chrono::steady_clock::now();
+  const double seconds = std::chrono::duration<double>(end - start).count();
+  return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
 }
 
 std::size_t SeqExactEngine::palette_size() const {

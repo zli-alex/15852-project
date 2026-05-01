@@ -7,6 +7,7 @@
 namespace {
 
 using dgcolor::Color;
+using dgcolor::BatchStats;
 using dgcolor::EdgeUpdate;
 using dgcolor::SeqExactEngine;
 using dgcolor::UpdateStats;
@@ -54,6 +55,21 @@ void AssertRejectedStats(const UpdateStats& stats) {
 void AssertAcceptedStats(const UpdateStats& stats) {
   assert(stats.applied);
   assert(stats.edges_changed == 1);
+  assert(stats.seconds >= 0.0);
+}
+
+void AssertRejectedBatchStats(const BatchStats& stats, std::size_t expected_updates) {
+  assert(!stats.applied);
+  assert(stats.updates == expected_updates);
+  assert(stats.edges_changed == 0);
+  assert(stats.vertices_touched == 0);
+  assert(stats.seconds >= 0.0);
+}
+
+void AssertAcceptedBatchStats(const BatchStats& stats, std::size_t expected_updates) {
+  assert(stats.applied);
+  assert(stats.updates == expected_updates);
+  assert(stats.edges_changed == expected_updates);
   assert(stats.seconds >= 0.0);
 }
 
@@ -354,6 +370,228 @@ void TestDeterministicSameSeedInsertionSequence() {
   assert(lhs.level_conflict_choices() == rhs.level_conflict_choices());
 }
 
+void TestApplyBatchBeforeInitializeThrows() {
+  SeqExactEngine engine(4, 3, 59);
+  UpdateBatch batch;
+  batch.push_back(Insert(0, 1));
+  bool threw = false;
+  try {
+    (void)engine.apply_batch(batch);
+  } catch (const std::logic_error&) {
+    threw = true;
+  }
+  assert(threw);
+}
+
+void TestAcceptedInsertionBatchNoConflicts() {
+  UpdateBatch initial;
+  initial.push_back(Insert(1, 2));
+  SeqExactEngine engine(4, 3, 61, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  UpdateBatch batch;
+  batch.push_back(Insert(0, 1));
+  batch.push_back(Insert(1, 3));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertAcceptedBatchStats(stats, batch.size());
+  assert(stats.vertices_touched == 0);
+  AssertColoringValid(engine);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
+void TestAcceptedInsertionBatchWithConflictRepairs() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(1, 2));
+  SeqExactEngine engine(3, 2, 67, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+
+  UpdateBatch batch;
+  batch.push_back(Insert(0, 2));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertAcceptedBatchStats(stats, batch.size());
+  assert(stats.vertices_touched >= 1);
+  AssertColoringValid(engine);
+  assert(engine.colors() != colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before + 1);
+  assert(engine.recolored_vertices_total() >= recolored_vertices_before + 1);
+  assert(engine.cascade_steps_total() >= cascade_steps_before + 1);
+}
+
+void TestAcceptedMixedInsertDeleteBatchValidates() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(1, 2));
+  initial.push_back(Insert(2, 3));
+  SeqExactEngine engine(4, 3, 71, initial);
+  engine.initialize_coloring();
+
+  UpdateBatch batch;
+  batch.push_back(Delete(1, 2));
+  batch.push_back(Insert(0, 2));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertAcceptedBatchStats(stats, batch.size());
+  AssertColoringValid(engine);
+}
+
+void TestAcceptedDeletionOnlyBatchPreservesColorsAndStats() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(1, 2));
+  initial.push_back(Insert(2, 3));
+  SeqExactEngine engine(4, 3, 73, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  UpdateBatch batch;
+  batch.push_back(Delete(1, 2));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertAcceptedBatchStats(stats, batch.size());
+  assert(stats.vertices_touched == 0);
+  AssertColoringValid(engine);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
+void TestRejectedDuplicateSameBatchEdgeStable() {
+  SeqExactEngine engine(5, 3, 79);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  UpdateBatch batch;
+  batch.push_back(Insert(2, 4));
+  batch.push_back(Insert(4, 2));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertRejectedBatchStats(stats, batch.size());
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
+void TestRejectedLoopBatchStable() {
+  SeqExactEngine engine(5, 3, 83);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  UpdateBatch batch;
+  batch.push_back(Insert(2, 2));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertRejectedBatchStats(stats, batch.size());
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
+void TestRejectedDegreeCapBatchStable() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(0, 2));
+  initial.push_back(Insert(1, 3));
+  SeqExactEngine engine(4, 2, 89, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  UpdateBatch batch;
+  batch.push_back(Insert(0, 3));
+  const BatchStats stats = engine.apply_batch(batch);
+  AssertRejectedBatchStats(stats, batch.size());
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
+void TestDeterministicSameSeedBatchSequence() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(1, 2));
+  initial.push_back(Insert(2, 3));
+  SeqExactEngine lhs(4, 3, 97, initial);
+  SeqExactEngine rhs(4, 3, 97, initial);
+  lhs.initialize_coloring();
+  rhs.initialize_coloring();
+
+  UpdateBatch b1;
+  b1.push_back(Insert(0, 2));
+  b1.push_back(Delete(1, 2));
+  UpdateBatch b2;
+  b2.push_back(Insert(1, 3));
+  UpdateBatch b3;
+  b3.push_back(Delete(0, 1));
+
+  const UpdateBatch batches[] = {b1, b2, b3};
+  for (const UpdateBatch& batch : batches) {
+    const BatchStats lhs_stats = lhs.apply_batch(batch);
+    const BatchStats rhs_stats = rhs.apply_batch(batch);
+    assert(lhs_stats.applied == rhs_stats.applied);
+    assert(lhs_stats.updates == rhs_stats.updates);
+    assert(lhs_stats.edges_changed == rhs_stats.edges_changed);
+    assert(lhs_stats.vertices_touched == rhs_stats.vertices_touched);
+  }
+
+  AssertColoringValid(lhs);
+  AssertColoringValid(rhs);
+  assert(lhs.colors() == rhs.colors());
+  assert(lhs.recolor_calls() == rhs.recolor_calls());
+  assert(lhs.recolored_vertices_total() == rhs.recolored_vertices_total());
+  assert(lhs.cascade_steps_total() == rhs.cascade_steps_total());
+  assert(lhs.full_fallback_count() == rhs.full_fallback_count());
+  assert(lhs.level_conflict_choices() == rhs.level_conflict_choices());
+}
+
 void TestInvalidInitialBatchThrows() {
   UpdateBatch invalid;
   invalid.push_back(Insert(0, 1));
@@ -364,22 +602,6 @@ void TestInvalidInitialBatchThrows() {
     SeqExactEngine engine(3, 2, 1, invalid);
     (void)engine;
   } catch (const std::invalid_argument&) {
-    threw = true;
-  }
-  assert(threw);
-}
-
-void TestApplyBatchStubThrows() {
-  SeqExactEngine engine(4, 3, 23);
-  engine.initialize_coloring();
-
-  UpdateBatch batch;
-  batch.push_back(Delete(0, 1));
-
-  bool threw = false;
-  try {
-    (void)engine.apply_batch(batch);
-  } catch (const std::logic_error&) {
     threw = true;
   }
   assert(threw);
@@ -404,7 +626,15 @@ int main() {
   TestAcceptedDeletionPreservesColorsAndStats();
   TestRejectedMissingDeletionStable();
   TestDeterministicSameSeedInsertionSequence();
+  TestApplyBatchBeforeInitializeThrows();
+  TestAcceptedInsertionBatchNoConflicts();
+  TestAcceptedInsertionBatchWithConflictRepairs();
+  TestAcceptedMixedInsertDeleteBatchValidates();
+  TestAcceptedDeletionOnlyBatchPreservesColorsAndStats();
+  TestRejectedDuplicateSameBatchEdgeStable();
+  TestRejectedLoopBatchStable();
+  TestRejectedDegreeCapBatchStable();
+  TestDeterministicSameSeedBatchSequence();
   TestInvalidInitialBatchThrows();
-  TestApplyBatchStubThrows();
   return 0;
 }
