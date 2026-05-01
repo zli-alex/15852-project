@@ -1,18 +1,21 @@
 engine_name,workload,batch_size,num_vertices,delta_cap,updates_requested,updates_generated,palette_multiplier,max_rounds,parlay_threads,speedup,speedup_std,speedup_n,series,efficiency
-par_exact,batch_valid,64,10000,32,16384,16384,,4.0,1.0,1.0,0.0,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,1.0
-par_exact,batch_valid,64,10000,32,16384,16384,,4.0,2.0,0.966166847484895,0.008352692922978525,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.4830834237424475
-par_exact,batch_valid,64,10000,32,16384,16384,,4.0,4.0,0.9564944187709545,0.005684403168460462,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.23912360469273863
-par_exact,batch_valid,64,10000,32,16384,16384,,4.0,8.0,0.9409702376861873,0.008937853865743013,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.11762127971077341
-par_exact,conflict_heavy,64,10000,32,16384,16384,,4.0,1.0,1.0,0.0,2,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,1.0
-par_exact,conflict_heavy,64,10000,32,16384,16384,,4.0,2.0,2.773181943314266,0.03685557474459839,2,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,1.386590971657133
-par_exact,conflict_heavy,64,10000,32,16384,16384,,4.0,4.0,2.507681548215942,0.032018953874862255,2,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,0.6269203870539855
-par_exact,conflict_heavy,64,10000,32,16384,16384,,4.0,8.0,1.9158023300815368,0.027717139557999662,2,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,0.2394752912601921
-par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4.0,1.0,1.0,0.0,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,1.0
-par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4.0,2.0,1.010008562114679,0.04258954704006276,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.5050042810573395
-par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4.0,4.0,0.9922518171429777,0.045022406166987064,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.24806295428574443
-par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4.0,8.0,0.9657464754002408,0.06321320823874382,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.1207183094250301
-par_relaxed,conflict_heavy,64,10000,32,16384,14828,16.0,4.0,1.0,1.0,,1,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=16,1.0
-par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4.0,1.0,1.0,0.0,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,1.0
-par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4.0,2.0,0.8813340310262173,0.010513601905569919,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.44066701551310866
-par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4.0,4.0,0.6323644305863095,0.01823302260456606,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.15809110764657738
-par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4.0,8.0,0.3449223860717796,0.007337580399983804,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.04311529825897245
+par_exact,batch_valid,64,10000,32,16384,16384,,4,1.0,1.0,0.0,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,1.0
+par_exact,batch_valid,64,10000,32,16384,16384,,4,2.0,0.9683572271638875,0.028644457046898105,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.48417861358194375
+par_exact,batch_valid,64,10000,32,16384,16384,,4,4.0,0.9633140711863667,0.012927952494987105,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.24082851779659167
+par_exact,batch_valid,64,10000,32,16384,16384,,4,8.0,0.9281589909654523,0.002849406626748958,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.11601987387068154
+par_exact,batch_valid,64,10000,32,16384,16384,,4,16.0,0.90211142937093,0.0057538641351386624,3,par_exact | batch_valid | b=64 | n=10000 | Delta=32,0.05638196433568313
+par_exact,conflict_heavy,64,10000,32,16384,16384,,4,1.0,1.0,0.0,3,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,1.0
+par_exact,conflict_heavy,64,10000,32,16384,16384,,4,2.0,0.9109475629846108,0.01210183262034775,3,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,0.4554737814923054
+par_exact,conflict_heavy,64,10000,32,16384,16384,,4,4.0,0.6772322929504687,0.005612779838795197,3,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,0.16930807323761718
+par_exact,conflict_heavy,64,10000,32,16384,16384,,4,8.0,0.36535210632485793,0.009916316627643492,3,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,0.04566901329060724
+par_exact,conflict_heavy,64,10000,32,16384,16384,,4,16.0,0.15871332345850675,0.0028047812609407973,3,par_exact | conflict_heavy | b=64 | n=10000 | Delta=32,0.009919582716156672
+par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4,1.0,1.0,0.0,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,1.0
+par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4,2.0,1.0823541711649738,0.07559751969591195,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.5411770855824869
+par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4,4.0,1.0200610736168911,0.053219538728537574,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.2550152684042228
+par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4,8.0,0.9265755584047562,0.03643897238411475,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.11582194480059453
+par_relaxed,batch_valid,64,10000,32,16384,16384,4.0,4,16.0,0.784599898669125,0.03960652679122147,3,par_relaxed | batch_valid | b=64 | n=10000 | Delta=32 | c=4,0.049037493666820316
+par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4,1.0,1.0,0.0,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,1.0
+par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4,2.0,0.92253942272308,0.03771816957325182,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.46126971136154
+par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4,4.0,0.6649946641440826,0.03317938251367379,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.16624866603602065
+par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4,8.0,0.3281178180153057,0.010094358009759,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.04101472725191321
+par_relaxed,conflict_heavy,64,10000,32,16384,16384,4.0,4,16.0,0.1205186926367479,0.011734214116938988,3,par_relaxed | conflict_heavy | b=64 | n=10000 | Delta=32 | c=4,0.007532418289796744

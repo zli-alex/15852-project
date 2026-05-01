@@ -22,6 +22,7 @@ MAX_ROUNDS="${MAX_ROUNDS:-4}"
 ENGINES="${ENGINES:-seq_baseline seq_exact par_relaxed par_exact}"
 MODE="${MODE:-insertion_only}"
 PREPARED_OUTPUT_DIR="${PREPARED_OUTPUT_DIR:-data/prepared}"
+SKIP_PREPARE="${SKIP_PREPARE:-0}"
 
 print_command() {
   printf "command="
@@ -30,30 +31,38 @@ print_command() {
 }
 
 bench_supports_file_stream() {
-  python3 - <<'PY'
-from pathlib import Path
-
-source = Path("benchmarks/bench_smoke.cpp")
-if not source.exists():
-    raise SystemExit(1)
-
-text = source.read_text(encoding="utf-8")
-required = ("file_stream", "--initial-file", "--updates-file")
-raise SystemExit(0 if all(token in text for token in required) else 1)
-PY
+  local source="benchmarks/bench_smoke.cpp"
+  [[ -f "${source}" ]] || return 1
+  rg -q "file_stream" "${source}" &&
+    rg -q -- "--initial-file" "${source}" &&
+    rg -q -- "--updates-file" "${source}"
 }
 
 metadata_value() {
   local metadata_path="$1"
   local key="$2"
-  python3 - "${metadata_path}" "${key}" <<'PY'
-import json
-import sys
+  if [[ ! -f "${metadata_path}" ]]; then
+    echo "error: metadata file does not exist: ${metadata_path}" >&2
+    return 1
+  fi
 
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    value = json.load(handle)[sys.argv[2]]
-print(value)
-PY
+  local line
+  line="$(rg -m1 "\"${key}\"[[:space:]]*:[[:space:]]*([0-9]+|\"[^\"]*\"|true|false|null)" "${metadata_path}" || true)"
+  if [[ -z "${line}" ]]; then
+    echo "error: key '${key}' not found in ${metadata_path}" >&2
+    return 1
+  fi
+
+  line="${line#*:}"
+  line="${line#,}"
+  line="${line%"${line##*[![:space:]]}"}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%,}"
+  if [[ "${line}" == \"*\" ]]; then
+    line="${line#\"}"
+    line="${line%\"}"
+  fi
+  echo "${line}"
 }
 
 run_prepare() {
@@ -142,6 +151,7 @@ main() {
   echo "engines=${ENGINES}"
   echo "mode=${MODE}"
   echo "prepared_output_dir=${PREPARED_OUTPUT_DIR}"
+  echo "skip_prepare=${SKIP_PREPARE}"
   echo
 
   echo "===== CONFIGURE / BUILD ====="
@@ -165,7 +175,13 @@ main() {
   fi
 
   for seed in ${SEEDS}; do
-    run_prepare "${seed}"
+    if [[ "${SKIP_PREPARE}" == "1" ]]; then
+      echo "===== PREPARE SKIPPED dataset=${DATASET_NAME} seed=${seed} ====="
+      echo "reason=SKIP_PREPARE=1"
+      echo
+    else
+      run_prepare "${seed}"
+    fi
     if [[ "${file_stream_supported}" == "1" ]]; then
       for engine in ${ENGINES}; do
         run_bench "${engine}" "${seed}"

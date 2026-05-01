@@ -2,14 +2,14 @@
   "batch_size": 64,
   "dataset_name": "ca-GrQc",
   "delta_cap": 64,
-  "initial_edges_written": 5000,
+  "initial_edges_written": 0,
   "largest_component_requested": false,
-  "max_degree_observed": 64,
+  "max_degree_observed": 58,
   "max_raw_edges": null,
   "mode": "insertion_only",
   "original_raw_edges_seen": 28980,
   "prepared_dir": "data/prepared/ca-GrQc/seed_3",
-  "remapped_num_vertices": 5241,
+  "remapped_num_vertices": 4716,
   "seed": 3,
   "shuffle": true,
   "skipped_degree_cap": 69,
@@ -19,5 +19,5 @@
   "source_path": "data/raw/ca-GrQc.txt.gz",
   "undirected": true,
   "unique_edges_after_filtering": 14484,
-  "updates_written": 9415
+  "updates_written": 10000
 }

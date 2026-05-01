@@ -1,7 +1,5 @@
 series,palette_multiplier,generator_attempts_per_update,generator_attempts_per_update_std,generator_attempts_per_update_n
-conflict_heavy (b=1),4.0,36.077799999999996,1.2190938164609533,10
-conflict_heavy (b=16),4.0,35.653125,0.5198735459944749,10
 conflict_heavy (b=64),2.0,46.656005859375,0.2948264921441234,3
-conflict_heavy (b=64),4.0,92.21004231770833,0.771844835443023,15
+conflict_heavy (b=64),4.0,92.21004231770833,0.9132591253308645,3
 conflict_heavy (b=64),8.0,181.00872802734375,0.8520392977315058,3
 conflict_heavy (b=64),16.0,340.69203648328335,3.424482545654509,3
