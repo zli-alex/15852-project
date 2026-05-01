@@ -14,6 +14,7 @@
 #include "dgcolor/par_relaxed_engine.hpp"
 #include "dgcolor/rng.hpp"
 #include "dgcolor/seq_baseline_engine.hpp"
+#include "dgcolor/seq_exact_engine.hpp"
 #include "dgcolor/validator.hpp"
 
 namespace {
@@ -66,9 +67,9 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
     if (arg == "--engine" && i + 1 < argc) {
       cfg->engine = argv[++i];
       if (cfg->engine != "graph_store_only" && cfg->engine != "seq_baseline" &&
-          cfg->engine != "par_relaxed") {
+          cfg->engine != "par_relaxed" && cfg->engine != "seq_exact") {
         throw std::invalid_argument(
-            "invalid --engine (expected graph_store_only|seq_baseline|par_relaxed)");
+            "invalid --engine (expected graph_store_only|seq_baseline|par_relaxed|seq_exact)");
       }
     } else if (arg == "--workload" && i + 1 < argc) {
       cfg->workload = argv[++i];
@@ -171,7 +172,8 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
     throw std::invalid_argument(cfg->workload + " currently supports batch_size=1 only");
   }
   if (cfg->workload == "conflict_heavy" && cfg->engine == "graph_store_only") {
-    throw std::invalid_argument("conflict_heavy currently supports seq_baseline|par_relaxed only");
+    throw std::invalid_argument(
+        "conflict_heavy currently supports seq_baseline|par_relaxed|seq_exact only");
   }
 }
 
@@ -406,6 +408,12 @@ int main(int argc, char** argv) {
   std::uint32_t max_rounds_out = 0;
   std::uint64_t total_rounds_out = 0;
   std::uint64_t fallback_count_out = 0;
+  std::size_t seq_exact_palette_size_out = 0;
+  std::uint64_t seq_exact_recolor_calls_out = 0;
+  std::uint64_t seq_exact_recolored_vertices_total_out = 0;
+  std::uint64_t seq_exact_cascade_steps_total_out = 0;
+  std::uint64_t seq_exact_full_fallback_count_out = 0;
+  std::uint64_t seq_exact_level_conflict_choices_out = 0;
   dgcolor::Degree max_degree = 0;
   bool graph_validated = false;
   bool coloring_validated = false;
@@ -415,6 +423,7 @@ int main(int argc, char** argv) {
   const auto build_start = std::chrono::steady_clock::now();
   std::unique_ptr<dgcolor::AdjacencyGraphStore> graph_only;
   std::unique_ptr<dgcolor::SeqBaselineEngine> seq_engine;
+  std::unique_ptr<dgcolor::SeqExactEngine> seq_exact_engine;
   std::unique_ptr<dgcolor::ParRelaxedEngine> par_relaxed_engine;
   if (cfg.engine == "graph_store_only") {
     graph_only = std::make_unique<dgcolor::AdjacencyGraphStore>(cfg.vertices, cfg.delta_cap);
@@ -423,6 +432,11 @@ int main(int argc, char** argv) {
     seq_engine = std::make_unique<dgcolor::SeqBaselineEngine>(cfg.vertices, cfg.delta_cap);
     seq_engine->initialize_coloring();
     initial_edges = seq_engine->graph().num_edges();
+  } else if (cfg.engine == "seq_exact") {
+    seq_exact_engine = std::make_unique<dgcolor::SeqExactEngine>(cfg.vertices, cfg.delta_cap, cfg.seed);
+    seq_exact_engine->initialize_coloring();
+    initial_edges = seq_exact_engine->graph().num_edges();
+    seq_exact_palette_size_out = seq_exact_engine->palette_size();
   } else {
     par_relaxed_engine = std::make_unique<dgcolor::ParRelaxedEngine>(
         cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds);
@@ -460,6 +474,10 @@ int main(int argc, char** argv) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
         update_applied = stats.applied;
@@ -484,7 +502,9 @@ int main(int argc, char** argv) {
       const std::size_t local_same_color_attempts = static_cast<std::size_t>(cfg.vertices) * 4 + 16;
       const std::size_t local_fallback_attempts = static_cast<std::size_t>(cfg.vertices) * 4 + 16;
       parlay::sequence<dgcolor::Color> colors_snapshot =
-          seq_engine ? seq_engine->colors() : par_relaxed_engine->colors();
+          seq_engine ? seq_engine->colors()
+                     : (seq_exact_engine ? seq_exact_engine->colors()
+                                         : par_relaxed_engine->colors());
 
       dgcolor::EdgeUpdate update{};
       bool generated = FindConflictHeavyInsertion(
@@ -509,6 +529,10 @@ int main(int argc, char** argv) {
       bool update_applied = false;
       if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else {
@@ -546,7 +570,9 @@ int main(int argc, char** argv) {
       std::unordered_set<std::uint64_t> batch_edges;
       batch_edges.reserve(target_batch_size * 2 + 1);
       const parlay::sequence<dgcolor::Color> colors_snapshot =
-          seq_engine ? seq_engine->colors() : par_relaxed_engine->colors();
+          seq_engine ? seq_engine->colors()
+                     : (seq_exact_engine ? seq_exact_engine->colors()
+                                         : par_relaxed_engine->colors());
 
       std::size_t same_color_attempts_local = 0;
       while (batch.size() < target_batch_size &&
@@ -599,6 +625,11 @@ int main(int argc, char** argv) {
       std::size_t edges_changed = 0;
       if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        batch_ok = stats.applied;
+        edges_changed = stats.edges_changed;
+        vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
         batch_ok = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
@@ -662,6 +693,10 @@ int main(int argc, char** argv) {
         update_applied = (result.status == dgcolor::UpdateStatus::Ok);
       } else if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        update_applied = stats.applied;
+        vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else {
@@ -731,6 +766,11 @@ int main(int argc, char** argv) {
           batch_applied = stats.applied;
           edges_changed = stats.edges_changed;
           vertices_touched_total += stats.vertices_touched;
+        } else if (seq_exact_engine) {
+          const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+          batch_applied = stats.applied;
+          edges_changed = stats.edges_changed;
+          vertices_touched_total += stats.vertices_touched;
         } else {
           const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
           batch_applied = stats.applied;
@@ -743,6 +783,11 @@ int main(int argc, char** argv) {
         edges_changed = batch_applied ? result.updates_applied : 0;
       } else if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        batch_applied = stats.applied;
+        edges_changed = stats.edges_changed;
+        vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
         batch_applied = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
@@ -783,6 +828,14 @@ int main(int argc, char** argv) {
           ++rejected;
         }
         vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+        if (stats.applied) {
+          ++applied;
+        } else {
+          ++rejected;
+        }
+        vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
         if (stats.applied) {
@@ -815,6 +868,15 @@ int main(int argc, char** argv) {
         }
       } else if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        if (stats.applied) {
+          applied += stats.edges_changed;
+          rejected += (batch.size() - stats.edges_changed);
+        } else {
+          rejected += batch.size();
+        }
+        vertices_touched_total += stats.vertices_touched;
+      } else if (seq_exact_engine) {
+        const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
         if (stats.applied) {
           applied += stats.edges_changed;
           rejected += (batch.size() - stats.edges_changed);
@@ -864,6 +926,27 @@ int main(int argc, char** argv) {
         max_degree = seq_engine->graph().degree(v);
       }
     }
+  } else if (seq_exact_engine) {
+    const dgcolor::ValidationResult graph_validation =
+        dgcolor::validate_graph_invariants(seq_exact_engine->graph());
+    graph_validated = graph_validation.ok;
+    graph_validation_message = graph_validation.message;
+    const dgcolor::ValidationResult color_validation =
+        dgcolor::validate_exact_coloring(seq_exact_engine->graph(), seq_exact_engine->colors());
+    coloring_validated = color_validation.ok;
+    coloring_validation_message = color_validation.message;
+    final_edges = seq_exact_engine->graph().num_edges();
+    for (dgcolor::VertexId v = 0; v < seq_exact_engine->graph().num_vertices(); ++v) {
+      if (seq_exact_engine->graph().degree(v) > max_degree) {
+        max_degree = seq_exact_engine->graph().degree(v);
+      }
+    }
+    seq_exact_palette_size_out = seq_exact_engine->palette_size();
+    seq_exact_recolor_calls_out = seq_exact_engine->recolor_calls();
+    seq_exact_recolored_vertices_total_out = seq_exact_engine->recolored_vertices_total();
+    seq_exact_cascade_steps_total_out = seq_exact_engine->cascade_steps_total();
+    seq_exact_full_fallback_count_out = seq_exact_engine->full_fallback_count();
+    seq_exact_level_conflict_choices_out = seq_exact_engine->level_conflict_choices();
   } else {
     const dgcolor::ValidationResult graph_validation =
         dgcolor::validate_graph_invariants(par_relaxed_engine->graph());
@@ -958,6 +1041,14 @@ int main(int argc, char** argv) {
       PrintMetric("repair_seconds", diagnostics.repair_seconds);
       PrintMetric("active_build_seconds", diagnostics.active_build_seconds);
     }
+  }
+  if (seq_exact_engine) {
+    PrintMetric("palette_size", seq_exact_palette_size_out);
+    PrintMetric("recolor_calls", seq_exact_recolor_calls_out);
+    PrintMetric("recolored_vertices_total", seq_exact_recolored_vertices_total_out);
+    PrintMetric("cascade_steps_total", seq_exact_cascade_steps_total_out);
+    PrintMetric("full_fallback_count", seq_exact_full_fallback_count_out);
+    PrintMetric("level_conflict_choices", seq_exact_level_conflict_choices_out);
   }
 
   if (!graph_validated) {
