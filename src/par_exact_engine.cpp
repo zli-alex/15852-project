@@ -1,5 +1,6 @@
 #include "dgcolor/par_exact_engine.hpp"
 
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -64,12 +65,54 @@ void ParExactEngine::initialize_coloring() {
   validate_coloring_or_throw("initialize_coloring");
 }
 
-UpdateStats ParExactEngine::apply_update(const EdgeUpdate& /*update*/) {
-  throw std::logic_error("ParExactEngine::apply_update is not implemented (Step 1 skeleton)");
+UpdateStats ParExactEngine::apply_update(const EdgeUpdate& update) {
+  if (!initialized_) {
+    throw std::logic_error("ParExactEngine::apply_update requires initialize_coloring() first");
+  }
+
+  UpdateBatch single;
+  single.push_back(update);
+  const BatchStats batch_stats = apply_batch_impl(single);
+  return UpdateStats{batch_stats.applied, batch_stats.edges_changed, batch_stats.vertices_touched,
+                     batch_stats.seconds};
 }
 
-BatchStats ParExactEngine::apply_batch(const UpdateBatch& /*batch*/) {
-  throw std::logic_error("ParExactEngine::apply_batch is not implemented (Step 1 skeleton)");
+BatchStats ParExactEngine::apply_batch(const UpdateBatch& batch) {
+  if (!initialized_) {
+    throw std::logic_error("ParExactEngine::apply_batch requires initialize_coloring() first");
+  }
+  return apply_batch_impl(batch);
+}
+
+BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
+  const auto start = std::chrono::steady_clock::now();
+  const BatchApplyResult result = graph_.apply_batch(batch);
+  if (result.status != UpdateStatus::Ok) {
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return BatchStats{false, batch.size(), 0, 0, seconds};
+  }
+
+  bool has_insert = false;
+  for (const EdgeUpdate& update : batch) {
+    if (update.kind == UpdateKind::Insert) {
+      has_insert = true;
+      break;
+    }
+  }
+
+  std::size_t vertices_touched = 0;
+  if (has_insert) {
+    recolor_all_greedy_exact();
+    ++fallback_count_;
+    vertices_touched = static_cast<std::size_t>(graph_.num_vertices());
+    vertices_touched_total_ += static_cast<std::uint64_t>(vertices_touched);
+  }
+
+  validate_coloring_or_throw("apply_batch");
+  const auto end = std::chrono::steady_clock::now();
+  const double seconds = std::chrono::duration<double>(end - start).count();
+  return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
 }
 
 std::size_t ParExactEngine::palette_size() const {

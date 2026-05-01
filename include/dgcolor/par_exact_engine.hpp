@@ -38,6 +38,7 @@ class ParExactEngine final : public ColoringEngine {
   std::uint64_t vertices_touched_total() const;
 
  private:
+  BatchStats apply_batch_impl(const UpdateBatch& batch);
   static std::uint64_t mix_u64(std::uint64_t x);
   Level deterministic_level_for_vertex(VertexId v) const;
   Color greedy_color_for_vertex(VertexId v) const;
