@@ -26,6 +26,8 @@ Runs the current comprehensive synthetic scaling suite and writes one combined l
 - runs `par_relaxed` c-scaling on larger workloads,
 - runs thread-count scaling for `par_relaxed` and `par_exact`.
 
+By default, the large `conflict_heavy` c-scaling run with `batch_size=1` is skipped because it can spend minutes searching for same-color endpoint pairs. Re-enable it explicitly with `RUN_C_SCALING_CONFLICT_HEAVY_SINGLE=1` when that generator cost is the target of the experiment.
+
 Run a small first check:
 
 ```bash

@@ -28,6 +28,7 @@ MAX_GENERATION_ATTEMPTS="${MAX_GENERATION_ATTEMPTS:-5000000}"
 RUN_ENGINE_COMPARISON="${RUN_ENGINE_COMPARISON:-1}"
 RUN_C_SCALING="${RUN_C_SCALING:-1}"
 RUN_THREAD_SCALING="${RUN_THREAD_SCALING:-1}"
+RUN_C_SCALING_CONFLICT_HEAVY_SINGLE="${RUN_C_SCALING_CONFLICT_HEAVY_SINGLE:-0}"
 
 print_command() {
   local parlay_threads="$1"
@@ -125,13 +126,20 @@ run_c_scaling_group() {
   echo "group_purpose=measure_palette_multiplier_effects"
   # For conflict_heavy, larger c makes same-color endpoints rarer, so
   # generation_attempts and generator_same_color_attempts are part of the
-  # result, not just algorithm runtime.
+  # result, not just algorithm runtime. The large batch_size=1 version is
+  # disabled by default because it can spend minutes in generation.
 
   for seed in ${SEEDS}; do
     for c_value in ${C_VALUES}; do
       run_bench par_relaxed valid_insertions "${seed}" "${LARGE_VERTICES}" "${LARGE_UPDATES}" "${LARGE_DELTA_CAP}" 1 "${c_value}" "${MAX_ROUNDS}" ""
       run_bench par_relaxed batch_valid "${seed}" "${LARGE_VERTICES}" "${LARGE_BATCH_UPDATES}" "${LARGE_DELTA_CAP}" "${BATCH_SIZE_LARGE}" "${c_value}" "${MAX_ROUNDS}" ""
-      run_bench par_relaxed conflict_heavy "${seed}" "${LARGE_VERTICES}" "${LARGE_UPDATES}" "${LARGE_DELTA_CAP}" 1 "${c_value}" "${MAX_ROUNDS}" ""
+      if [[ "${RUN_C_SCALING_CONFLICT_HEAVY_SINGLE}" == "1" ]]; then
+        run_bench par_relaxed conflict_heavy "${seed}" "${LARGE_VERTICES}" "${LARGE_UPDATES}" "${LARGE_DELTA_CAP}" 1 "${c_value}" "${MAX_ROUNDS}" ""
+      else
+        echo "===== SKIP engine=par_relaxed workload=conflict_heavy seed=${seed} vertices=${LARGE_VERTICES} updates=${LARGE_UPDATES} delta_cap=${LARGE_DELTA_CAP} batch_size=1 c=${c_value} ====="
+        echo "skip_reason=large_conflict_heavy_batch_size_1_generation_is_expensive"
+        echo
+      fi
       run_bench par_relaxed conflict_heavy "${seed}" "${LARGE_VERTICES}" "${LARGE_BATCH_UPDATES}" "${LARGE_DELTA_CAP}" "${BATCH_SIZE_LARGE}" "${c_value}" "${MAX_ROUNDS}" ""
     done
   done
@@ -188,6 +196,7 @@ main() {
   echo "run_engine_comparison=${RUN_ENGINE_COMPARISON}"
   echo "run_c_scaling=${RUN_C_SCALING}"
   echo "run_thread_scaling=${RUN_THREAD_SCALING}"
+  echo "run_c_scaling_conflict_heavy_single=${RUN_C_SCALING_CONFLICT_HEAVY_SINGLE}"
   echo
 
   echo "===== CONFIGURE / BUILD ====="
