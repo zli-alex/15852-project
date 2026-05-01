@@ -25,7 +25,6 @@ run_bench() {
   local seed="$5"
 
   echo "===== RUN engine=${engine} workload=${workload} batch_size=${batch_size} seed=${seed} ====="
-  echo "command=./build/benchmarks/bench_smoke --engine ${engine} --workload ${workload} --seed ${seed} --vertices ${VERTICES} --updates ${updates} --delta-cap ${DELTA_CAP} --batch-size ${batch_size}"
 
   local cmd=(
     ./build/benchmarks/bench_smoke
@@ -39,14 +38,14 @@ run_bench() {
   )
 
   if [[ "${engine}" == "par_relaxed" ]]; then
-    echo "engine_options=--c ${C_VALUE} --max-rounds ${MAX_ROUNDS}"
     cmd+=(--c "${C_VALUE}" --max-rounds "${MAX_ROUNDS}")
   elif [[ "${engine}" == "par_exact" ]]; then
-    echo "engine_options=--max-rounds ${MAX_ROUNDS}"
     cmd+=(--max-rounds "${MAX_ROUNDS}")
-  else
-    echo "engine_options="
   fi
+
+  printf "command="
+  printf "%q " "${cmd[@]}"
+  printf "\n"
 
   "${cmd[@]}"
   echo
@@ -71,6 +70,7 @@ main() {
   echo "seeds=${SEEDS}"
   echo "c_value=${C_VALUE}"
   echo "max_rounds=${MAX_ROUNDS}"
+  echo "parlay_threads=${PARLAY_NUM_THREADS:-default}"
   echo
 
   echo "===== CONFIGURE / BUILD ====="
