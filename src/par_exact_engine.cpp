@@ -1,5 +1,6 @@
 #include "dgcolor/par_exact_engine.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
@@ -115,6 +116,27 @@ BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
   return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
 }
 
+std::uint64_t ParExactEngine::deterministic_hash(std::uint64_t seed, std::uint64_t round_index,
+                                                 VertexId v, std::uint64_t salt) {
+  std::uint64_t x = seed ^ (round_index + 0x9e3779b97f4a7c15ULL) ^
+                    (static_cast<std::uint64_t>(v) * 0xbf58476d1ce4e5b9ULL) ^ salt;
+  x ^= x >> 33U;
+  x *= 0xff51afd7ed558ccdULL;
+  x ^= x >> 33U;
+  x *= 0xc4ceb9fe1a85ec53ULL;
+  x ^= x >> 33U;
+  return x;
+}
+
+Color ParExactEngine::deterministic_color_offset(std::uint64_t round_index, VertexId v,
+                                                 std::uint64_t salt) const {
+  const std::uint64_t palette = static_cast<std::uint64_t>(palette_size());
+  if (palette == 0) {
+    return 0;
+  }
+  return static_cast<Color>(deterministic_hash(seed_, round_index, v, salt) % palette);
+}
+
 std::size_t ParExactEngine::palette_size() const {
   return static_cast<std::size_t>(graph_.delta_cap()) + 1U;
 }
@@ -169,6 +191,153 @@ Level ParExactEngine::deterministic_level_for_vertex(VertexId v) const {
       mix_u64(seed_ ^ (static_cast<std::uint64_t>(v) + 0x9e3779b97f4a7c15ULL));
   const std::uint64_t modulo = static_cast<std::uint64_t>(graph_.delta_cap()) + 1ULL;
   return static_cast<Level>(mixed % modulo);
+}
+
+VertexId ParExactEngine::choose_conflict_endpoint(VertexId u, VertexId v) const {
+  const Level lu = levels_[u];
+  const Level lv = levels_[v];
+  if (lu != lv) {
+    return (lu > lv) ? u : v;
+  }
+
+  const Timestamp tu = timestamps_[u];
+  const Timestamp tv = timestamps_[v];
+  if (tu != tv) {
+    return (tu > tv) ? u : v;
+  }
+
+  return (u > v) ? u : v;
+}
+
+std::vector<VertexId> ParExactEngine::deduplicate_and_sort_vertices(
+    const std::vector<VertexId>& vertices) {
+  std::vector<VertexId> out = vertices;
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+std::vector<unsigned char> ParExactEngine::build_active_membership(
+    const std::vector<VertexId>& active) const {
+  std::vector<unsigned char> mask(graph_.num_vertices(), 0);
+  for (VertexId v : active) {
+    if (v < graph_.num_vertices()) {
+      mask[v] = 1;
+    }
+  }
+  return mask;
+}
+
+std::vector<VertexId> ParExactEngine::collect_conflicted_vertices_from_inserted_edges(
+    const UpdateBatch& batch) const {
+  std::vector<VertexId> starts;
+  starts.reserve(batch.size());
+  for (const EdgeUpdate& update : batch) {
+    if (update.kind != UpdateKind::Insert) {
+      continue;
+    }
+    if (update.u >= graph_.num_vertices() || update.v >= graph_.num_vertices()) {
+      continue;
+    }
+    if (colors_[update.u] == colors_[update.v]) {
+      starts.push_back(choose_conflict_endpoint(update.u, update.v));
+    }
+  }
+  return deduplicate_and_sort_vertices(starts);
+}
+
+Color ParExactEngine::first_available_color_with_offset(VertexId v, Color offset) const {
+  const std::size_t palette = palette_size();
+  std::vector<unsigned char> unavailable(palette, 0);
+  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+  for (VertexId u : nbrs) {
+    const Color c = colors_[u];
+    if (color_in_palette_range(c)) {
+      unavailable[c] = 1;
+    }
+  }
+
+  for (std::size_t i = 0; i < palette; ++i) {
+    const Color candidate = static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
+    if (!unavailable[candidate]) {
+      return candidate;
+    }
+  }
+  return kUncolored;
+}
+
+bool ParExactEngine::proposal_conflicts_non_active_neighbors(
+    VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask) const {
+  if (!color_in_palette_range(proposed_color)) {
+    return true;
+  }
+
+  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+  for (VertexId u : nbrs) {
+    if (u < active_mask.size() && active_mask[u]) {
+      continue;
+    }
+    if (colors_[u] == proposed_color) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ParExactEngine::proposal_conflicts_active_neighbors(
+    VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask,
+    const std::vector<VertexId>& active, const std::vector<Color>& proposed_colors) const {
+  if (!color_in_palette_range(proposed_color)) {
+    return true;
+  }
+  if (active.size() != proposed_colors.size()) {
+    return true;
+  }
+
+  std::vector<int> active_index(graph_.num_vertices(), -1);
+  for (std::size_t i = 0; i < active.size(); ++i) {
+    if (active[i] < graph_.num_vertices()) {
+      active_index[active[i]] = static_cast<int>(i);
+    }
+  }
+
+  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+  for (VertexId u : nbrs) {
+    if (u >= active_mask.size() || !active_mask[u]) {
+      continue;
+    }
+    const int j = active_index[u];
+    if (j < 0) {
+      continue;
+    }
+    if (proposed_colors[static_cast<std::size_t>(j)] == proposed_color && u < v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<VertexId> ParExactEngine::collect_unresolved_frontier_from_candidates(
+    const std::vector<VertexId>& candidates) const {
+  std::vector<VertexId> unresolved;
+  unresolved.reserve(candidates.size());
+  for (VertexId v : candidates) {
+    if (v >= graph_.num_vertices()) {
+      continue;
+    }
+    const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+    bool conflicted = false;
+    for (VertexId u : nbrs) {
+      if (colors_[u] == colors_[v]) {
+        conflicted = true;
+        break;
+      }
+    }
+    if (conflicted) {
+      unresolved.push_back(v);
+    }
+  }
+  return deduplicate_and_sort_vertices(unresolved);
 }
 
 Color ParExactEngine::greedy_color_for_vertex(VertexId v) const {

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "dgcolor/coloring_engine.hpp"
 
@@ -39,8 +40,28 @@ class ParExactEngine final : public ColoringEngine {
 
  private:
   BatchStats apply_batch_impl(const UpdateBatch& batch);
+  [[maybe_unused]] static std::uint64_t deterministic_hash(std::uint64_t seed,
+                                                           std::uint64_t round_index, VertexId v,
+                                                           std::uint64_t salt = 0);
+  [[maybe_unused]] Color deterministic_color_offset(std::uint64_t round_index, VertexId v,
+                                                    std::uint64_t salt = 0) const;
   static std::uint64_t mix_u64(std::uint64_t x);
   Level deterministic_level_for_vertex(VertexId v) const;
+  [[maybe_unused]] VertexId choose_conflict_endpoint(VertexId u, VertexId v) const;
+  [[maybe_unused]] static std::vector<VertexId> deduplicate_and_sort_vertices(
+      const std::vector<VertexId>& vertices);
+  [[maybe_unused]] std::vector<unsigned char> build_active_membership(
+      const std::vector<VertexId>& active) const;
+  [[maybe_unused]] std::vector<VertexId> collect_conflicted_vertices_from_inserted_edges(
+      const UpdateBatch& batch) const;
+  [[maybe_unused]] Color first_available_color_with_offset(VertexId v, Color offset) const;
+  [[maybe_unused]] bool proposal_conflicts_non_active_neighbors(
+      VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask) const;
+  [[maybe_unused]] bool proposal_conflicts_active_neighbors(
+      VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask,
+      const std::vector<VertexId>& active, const std::vector<Color>& proposed_colors) const;
+  [[maybe_unused]] std::vector<VertexId> collect_unresolved_frontier_from_candidates(
+      const std::vector<VertexId>& candidates) const;
   Color greedy_color_for_vertex(VertexId v) const;
   void recolor_all_greedy_exact();
   bool color_in_palette_range(Color c) const;
