@@ -37,6 +37,7 @@ struct BenchConfig {
   std::size_t max_generation_attempts{0};
   std::size_t validate_every{0};
   bool validate_final_only{false};
+  bool par_exact_token_repair{false};
 };
 
 bool ParseU64(const std::string& text, std::uint64_t* out) {
@@ -161,6 +162,8 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
       cfg->validate_every = static_cast<std::size_t>(v);
     } else if (arg == "--validate-final-only") {
       cfg->validate_final_only = true;
+    } else if (arg == "--par-exact-token-repair") {
+      cfg->par_exact_token_repair = true;
     } else {
       throw std::invalid_argument("unknown or incomplete argument: " + arg);
     }
@@ -456,6 +459,8 @@ int main(int argc, char** argv) {
     par_exact_engine =
         std::make_unique<dgcolor::ParExactEngine>(cfg.vertices, cfg.delta_cap, cfg.seed, cfg.max_rounds);
     par_exact_engine->initialize_coloring();
+    par_exact_engine->set_diagnostics_enabled(cfg.diagnostics);
+    par_exact_engine->set_token_repair_enabled(cfg.par_exact_token_repair);
     if (cfg.validate_final_only) {
       par_exact_engine->set_validate_after_apply(false);
     }
@@ -1188,6 +1193,7 @@ int main(int argc, char** argv) {
   PrintMetric("graph_apply_seconds", graph_apply_seconds);
   PrintMetric("validate_seconds", validate_seconds);
   PrintMetric("validate_final_only", cfg.validate_final_only ? 1 : 0);
+  PrintMetric("par_exact_token_repair", cfg.par_exact_token_repair ? 1 : 0);
   PrintMetric("throughput_updates_per_second", throughput);
   PrintMetric("max_degree_observed", max_degree);
   PrintMetric("graph_validated", graph_validated ? 1 : 0);
@@ -1246,6 +1252,17 @@ int main(int argc, char** argv) {
     PrintMetric("active_size_round_total", diagnostics.active_size_round_total);
     PrintMetric("neighbor_materializations", diagnostics.neighbor_materializations);
     PrintMetric("direct_neighbor_scans", diagnostics.direct_neighbor_scans);
+    PrintMetric("level_ge_neighbor_scans", diagnostics.level_ge_neighbor_scans);
+    PrintMetric("level_le_neighbor_scans", diagnostics.level_le_neighbor_scans);
+    PrintMetric("level_palette_candidates_total", diagnostics.level_palette_candidates_total);
+    PrintMetric("level_diagnostic_vertices", diagnostics.level_diagnostic_vertices);
+    PrintMetric("active_dense_rebuilds", diagnostics.active_dense_rebuilds);
+    PrintMetric("token_repair_calls", diagnostics.token_repair_calls);
+    PrintMetric("level_histogram_1", diagnostics.level_histogram_1);
+    PrintMetric("level_histogram_2", diagnostics.level_histogram_2);
+    PrintMetric("level_histogram_3", diagnostics.level_histogram_3);
+    PrintMetric("level_histogram_4", diagnostics.level_histogram_4);
+    PrintMetric("level_histogram_5_plus", diagnostics.level_histogram_5_plus);
   }
 
   if (!graph_validated) {

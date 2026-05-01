@@ -1,5 +1,5 @@
 BEGIN {
-  n = split("host,date,git_commit,parlay_threads,engine_name,workload,seed,num_vertices,delta_cap,batch_size,palette_multiplier,palette_size,max_rounds,updates_requested,updates_generated,updates_applied,updates_rejected,accepted_ratio,batches_generated,batches_applied,batch_accepted_ratio,generation_attempts,generator_same_color_attempts,generator_same_color_chosen,generator_same_color_fallbacks,initial_edges_requested,initial_edges,final_edges,target_accepted,insert_ratio,max_generation_attempts,build_seconds,update_seconds,generation_seconds,engine_apply_seconds,graph_apply_seconds,validate_seconds,validate_final_only,throughput_updates_per_second,max_degree_observed,graph_validated,coloring_validated,vertices_touched_total,total_rounds,fallback_count,repair_calls,repair_rounds,sequential_repair_calls,sequential_repair_rounds,active_vertices_initial_total,active_vertices_expanded_total,conflicted_vertices_initial_total,neighbor_scans,commits_total,repair_seconds,active_build_seconds,internal_validation_seconds,max_active_size,active_size_round_total,neighbor_materializations,direct_neighbor_scans,recolor_calls,recolored_vertices_total,cascade_steps_total,full_fallback_count,level_conflict_choices,active_vertices_total,repair_rounds_total,proposal_count,commit_count,unresolved_count,sequential_fast_path_count,validation_message,color_validation_message", fields, ",")
+  n = split("host,date,git_commit,parlay_threads,engine_name,workload,seed,num_vertices,delta_cap,batch_size,palette_multiplier,palette_size,max_rounds,updates_requested,updates_generated,updates_applied,updates_rejected,accepted_ratio,batches_generated,batches_applied,batch_accepted_ratio,generation_attempts,generator_same_color_attempts,generator_same_color_chosen,generator_same_color_fallbacks,initial_edges_requested,initial_edges,final_edges,target_accepted,insert_ratio,max_generation_attempts,build_seconds,update_seconds,generation_seconds,engine_apply_seconds,graph_apply_seconds,validate_seconds,validate_final_only,par_exact_token_repair,throughput_updates_per_second,max_degree_observed,graph_validated,coloring_validated,vertices_touched_total,total_rounds,fallback_count,repair_calls,repair_rounds,sequential_repair_calls,sequential_repair_rounds,active_vertices_initial_total,active_vertices_expanded_total,conflicted_vertices_initial_total,neighbor_scans,commits_total,repair_seconds,active_build_seconds,internal_validation_seconds,max_active_size,active_size_round_total,neighbor_materializations,direct_neighbor_scans,level_ge_neighbor_scans,level_le_neighbor_scans,level_palette_candidates_total,level_diagnostic_vertices,active_dense_rebuilds,token_repair_calls,level_histogram_1,level_histogram_2,level_histogram_3,level_histogram_4,level_histogram_5_plus,recolor_calls,recolored_vertices_total,cascade_steps_total,full_fallback_count,level_conflict_choices,active_vertices_total,repair_rounds_total,proposal_count,commit_count,unresolved_count,sequential_fast_path_count,validation_message,color_validation_message", fields, ",")
   for (i = 1; i <= n; ++i) {
     printf "%s%s", (i == 1 ? "" : ","), fields[i]
   }
@@ -45,7 +45,11 @@ function flush_record(    i, key, value) {
   key = substr($0, 1, sep - 1)
   value = substr($0, sep + 1)
 
-  if (key == "date" || key == "host" || key == "git_commit" || key == "parlay_threads") {
+  if (key == "date" || key == "host" || key == "git_commit" || key == "parlay_threads" ||
+      key == "batch_size_config") {
+    if (in_record) {
+      flush_record()
+    }
     meta[key] = value
     next
   }

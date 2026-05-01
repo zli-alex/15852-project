@@ -21,6 +21,17 @@ struct ParExactDiagnostics {
   double internal_validation_seconds{0.0};
   std::uint64_t neighbor_materializations{0};
   std::uint64_t direct_neighbor_scans{0};
+  std::uint64_t level_ge_neighbor_scans{0};
+  std::uint64_t level_le_neighbor_scans{0};
+  std::uint64_t level_palette_candidates_total{0};
+  std::uint64_t level_diagnostic_vertices{0};
+  std::uint64_t active_dense_rebuilds{0};
+  std::uint64_t token_repair_calls{0};
+  std::uint64_t level_histogram_1{0};
+  std::uint64_t level_histogram_2{0};
+  std::uint64_t level_histogram_3{0};
+  std::uint64_t level_histogram_4{0};
+  std::uint64_t level_histogram_5_plus{0};
 };
 
 class ParExactEngine final : public ColoringEngine {
@@ -52,6 +63,10 @@ class ParExactEngine final : public ColoringEngine {
   std::uint64_t vertices_touched_total() const;
   void set_validate_after_apply(bool enabled);
   bool validate_after_apply() const;
+  void set_diagnostics_enabled(bool enabled);
+  bool diagnostics_enabled() const;
+  void set_token_repair_enabled(bool enabled);
+  bool token_repair_enabled() const;
   ParExactDiagnostics diagnostics() const;
 
  private:
@@ -68,18 +83,23 @@ class ParExactEngine final : public ColoringEngine {
   [[maybe_unused]] VertexId choose_conflict_endpoint(VertexId u, VertexId v) const;
   [[maybe_unused]] static std::vector<VertexId> deduplicate_and_sort_vertices(
       const std::vector<VertexId>& vertices);
-  [[maybe_unused]] std::vector<unsigned char> build_active_membership(
-      const std::vector<VertexId>& active) const;
+  [[maybe_unused]] void prepare_active_membership(const std::vector<VertexId>& active);
+  bool is_active_vertex(VertexId v) const;
+  int active_vertex_index(VertexId v) const;
+  void record_level_diagnostics(const std::vector<VertexId>& active);
   [[maybe_unused]] std::vector<VertexId> collect_conflicted_vertices_from_inserted_edges(
       const UpdateBatch& batch) const;
   [[maybe_unused]] Color first_available_color_with_offset(VertexId v, Color offset) const;
   [[maybe_unused]] bool proposal_conflicts_non_active_neighbors(
-      VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask) const;
+      VertexId v, Color proposed_color) const;
   [[maybe_unused]] bool proposal_conflicts_active_neighbors(
-      VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask,
-      const std::vector<int>& active_index, const std::vector<Color>& proposed_colors) const;
+      VertexId v, Color proposed_color, const std::vector<Color>& proposed_colors) const;
   [[maybe_unused]] std::vector<VertexId> collect_unresolved_frontier_from_candidates(
       const std::vector<VertexId>& candidates) const;
+  bool attempt_token_recolor_batch(const std::vector<VertexId>& initial_active,
+                                   std::size_t* vertices_touched,
+                                   std::uint64_t* rounds_attempted);
+  Color sampled_level_aware_color(VertexId v, std::uint64_t round_index) const;
   Color greedy_color_for_vertex(VertexId v) const;
   const std::unordered_set<VertexId>& direct_neighbors(VertexId v) const;
   void recolor_all_greedy_exact();
@@ -95,6 +115,13 @@ class ParExactEngine final : public ColoringEngine {
   Timestamp logical_time_{0};
   bool initialized_{false};
   bool validate_after_apply_{true};
+  bool diagnostics_enabled_{false};
+  bool token_repair_enabled_{false};
+  std::uint64_t current_active_stamp_{1};
+  bool active_membership_sparse_current_{false};
+  std::vector<VertexId> active_lookup_;
+  std::vector<std::uint64_t> active_stamp_;
+  std::vector<int> active_index_;
 
   std::uint64_t active_vertices_total_{0};
   std::uint64_t repair_rounds_total_{0};

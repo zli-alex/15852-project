@@ -406,6 +406,30 @@ void TestDeterministicSameSeedSequence() {
   assert(SameDiag(SnapshotDiag(lhs), SnapshotDiag(rhs)));
 }
 
+void TestLevelDiagnosticsHistogramAfterInitialize() {
+  constexpr VertexId kVertices = 32;
+  ParExactEngine engine(kVertices, 8, 22, kMaxRounds);
+  engine.initialize_coloring();
+  const auto diagnostics = engine.diagnostics();
+  const std::uint64_t total_levels =
+      diagnostics.level_histogram_1 + diagnostics.level_histogram_2 +
+      diagnostics.level_histogram_3 + diagnostics.level_histogram_4 +
+      diagnostics.level_histogram_5_plus;
+  assert(total_levels == kVertices);
+}
+
+void TestExperimentalTokenRepairValidatesWithFallbackSafety() {
+  ParExactEngine engine(8, 5, 23, kMaxRounds);
+  engine.set_token_repair_enabled(true);
+  engine.set_diagnostics_enabled(true);
+  engine.initialize_coloring();
+
+  const UpdateStats stats = engine.apply_update(Insert(0, 1));
+  assert(stats.applied);
+  assert(engine.diagnostics().token_repair_calls >= 1);
+  AssertColoringValid(engine);
+}
+
 void TestInitialBatchInvalidThrows() {
   UpdateBatch bad;
   bad.push_back(Insert(0, 0));
@@ -438,6 +462,8 @@ int main() {
   TestRejectedLoopBatchPreservesState();
   TestRejectedDegreeCapBatchPreservesState();
   TestDeterministicSameSeedSequence();
+  TestLevelDiagnosticsHistogramAfterInitialize();
+  TestExperimentalTokenRepairValidatesWithFallbackSafety();
   TestInitialBatchInvalidThrows();
   return 0;
 }

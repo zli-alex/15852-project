@@ -69,6 +69,18 @@ NUMERIC_COLUMNS = [
     "active_size_round_total",
     "neighbor_materializations",
     "direct_neighbor_scans",
+    "level_ge_neighbor_scans",
+    "level_le_neighbor_scans",
+    "level_palette_candidates_total",
+    "level_diagnostic_vertices",
+    "active_dense_rebuilds",
+    "token_repair_calls",
+    "level_histogram_1",
+    "level_histogram_2",
+    "level_histogram_3",
+    "level_histogram_4",
+    "level_histogram_5_plus",
+    "par_exact_token_repair",
     "parlay_threads",
 ]
 
