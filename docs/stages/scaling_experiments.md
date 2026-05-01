@@ -76,7 +76,7 @@ For a smaller smoke run:
 VERTICES=1000 UPDATES=1000 THREAD_VALUES="1 2" ./scripts/run_synthetic_thread_sweep.sh
 ```
 
-Thread scaling may be masked if `sequential_repair_rounds / repair_rounds` is near `1`, because tiny repair sets intentionally use the sequential repair fast path.
+Thread scaling may be masked if `sequential_repair_rounds / repair_rounds` is near `1`, because tiny repair sets intentionally use the sequential repair fast path. This occurred in the recorded conflict-heavy batch c-sweep result.
 
 ## Parser
 
@@ -119,6 +119,47 @@ CSV columns include:
 - `graph_validated`
 - `coloring_validated`
 
+## Conflict-Heavy Batch C-Sweep Result
+
+Recorded conflict-heavy batch c-sweep configuration:
+
+- `vertices=10000`
+- `updates=6800`
+- `delta_cap=32`
+- `batch_size=16`
+- `seeds=1,2,3`
+- `c in {2,4,8,16}`
+- `PARLAY_NUM_THREADS=1`
+- `max_generation_attempts=5000000`
+
+Validation outcome across all listed `c`/seed runs:
+
+- `updates_generated=6800`
+- `accepted_ratio=1`
+- `batch_accepted_ratio=1`
+- `graph_validated=1`
+- `coloring_validated=1`
+- `fallback_count=0`
+
+Main finding:
+
+- Larger `c` sharply increases `generator_same_color_attempts`, because same-color endpoint pairs are rarer.
+- Repair-side metrics remain stable across `c`:
+  - `repair_calls` around `425`,
+  - `total_rounds` around `425-427`,
+  - `vertices_touched_total` around `13.5k`.
+- `update_seconds` changes only mildly with `c`.
+
+Caveat:
+
+- This workload is intentionally adversarial (it seeks same-color insertions), so it does not represent the natural conflict-probability reduction expected from larger `c`.
+- All repair rounds still use the sequential fast path, so this experiment is not a thread-scaling result.
+
+Conclusion:
+
+- The current c-sweep is useful for adversarial conflict-heavy behavior and generator difficulty.
+- Meaningful thread scaling still requires larger active sets or a workload/setting mix that triggers parallel repair rounds.
+
 ## How to Interpret Results
 
 ### C sweep
@@ -139,7 +180,8 @@ Useful fields:
 
 Interpretation caveat:
 
-- Meaningful final c-scaling likely still needs `conflict_heavy`, because `batch_valid` may not create enough same-color insertions to stress repair as `c` changes.
+- `batch_valid` c-scaling can be too smooth because it does not target same-color conflicts.
+- `conflict_heavy` c-sweeps are useful stress tests, but because they are adversarial they emphasize generator difficulty more than natural conflict-rate changes.
 
 ### Thread sweep
 

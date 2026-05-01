@@ -8,16 +8,25 @@ Implemented workloads:
 - `valid_insertions`: accepted insertion streams for `batch_size=1`.
 - `mixed_valid`: single-update insert/delete streams using `--insert-ratio` as a preference, not a hard constraint. If the preferred operation cannot be generated, the generator tries the other operation.
 - `batch_valid`: accepted insertion-only batches. This makes `batch_size=4` and `batch_size=16` meaningful for accepted batch benchmarking.
+- `conflict_heavy`: implemented for coloring engines; supports `batch_size=1` and insertion-only conflict-heavy batches for `batch_size>1`, with same-color preference and fallback valid insertion fill.
 
 Current limitations:
 
 - `batch_valid` does not yet implement mixed insert/delete batches.
-- `conflict_heavy`, `sparse_stream`, `dense_near_delta`, and `batch_conflict` remain future/stretch workloads.
+- `conflict_heavy` remains insertion-only and keeps `graph_store_only` unsupported.
+- `sparse_stream`, `dense_near_delta`, and `batch_conflict` remain future/stretch workloads.
 
 Current Linux validation:
 
 - `batch_valid batch_size=4` applies `1000/1000` updates with `accepted_ratio=1`.
 - `batch_valid batch_size=16` applies `1024/1024` updates with `accepted_ratio=1` for `par_relaxed`.
+- conflict-heavy batch c-sweep (`vertices=10000`, `updates=6800`, `delta_cap=32`, `batch_size=16`, `c in {2,4,8,16}`, seeds `1,2,3`, `PARLAY_NUM_THREADS=1`, `max_generation_attempts=5000000`) validated with:
+  - `updates_generated=6800`
+  - `accepted_ratio=1`
+  - `batch_accepted_ratio=1`
+  - `graph_validated=1`
+  - `coloring_validated=1`
+  - `fallback_count=0`
 - Full CTest passes: `100% tests passed, 0 tests failed out of 10`.
 - Parlay external-header warnings may appear during build but are not currently blocking.
 
@@ -110,6 +119,13 @@ Purpose:
 - Stress `par_relaxed` repair rounds.
 - Create meaningful coloring work while preserving graph validity.
 - For `graph_store_only`, use the same generated edge stream produced from a color-aware run or a topology-only approximation documented in logs.
+
+Current implementation:
+
+- supports coloring engines only (`seq_baseline`, `par_relaxed`);
+- keeps `graph_store_only` unsupported;
+- supports `batch_size=1` and insertion-only batches for `batch_size>1`;
+- for batch mode, prefers same-color edges and then uses fallback valid insertions when needed.
 
 ### `sparse_stream`
 
