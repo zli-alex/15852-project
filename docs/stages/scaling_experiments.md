@@ -15,6 +15,46 @@ The initial scripts focus on `batch_valid` because it gives accepted insertion b
 
 ## Scripts
 
+### `scripts/run_scaling_suite.sh`
+
+Runs the current comprehensive synthetic scaling suite and writes one combined log under `logs/scaling/`:
+
+- configures and builds Release,
+- runs full CTest once before benchmarking,
+- logs `date`, `host`, `git_commit`, `root_dir`, `log_path`, and all suite config values,
+- runs a four-engine comparison on moderate workloads,
+- runs `par_relaxed` c-scaling on larger workloads,
+- runs thread-count scaling for `par_relaxed` and `par_exact`.
+
+Run a small first check:
+
+```bash
+RUN_C_SCALING=0 RUN_THREAD_SCALING=0 SEEDS="1" bash scripts/run_scaling_suite.sh
+```
+
+Run c-scaling only:
+
+```bash
+RUN_ENGINE_COMPARISON=0 RUN_THREAD_SCALING=0 SEEDS="1 2 3" C_VALUES="2 4 8 16" bash scripts/run_scaling_suite.sh
+```
+
+Run thread-scaling only:
+
+```bash
+RUN_ENGINE_COMPARISON=0 RUN_C_SCALING=0 SEEDS="1 2 3" THREAD_VALUES="1 2 4 8" bash scripts/run_scaling_suite.sh
+```
+
+Convert logs to CSV:
+
+```bash
+awk -f scripts/parse_bench_kv.awk logs/scaling/scaling_suite_*.log > logs/scaling/scaling_suite.csv
+```
+
+Interpretation caveats:
+
+- For `conflict_heavy`, larger `c` makes same-color endpoints rarer, so `generation_attempts` and `generator_same_color_attempts` are part of the result.
+- If `sequential_fast_path_count` is close to repair rounds/calls, thread speedup may be limited because active repair sets are small.
+
 ### `scripts/run_synthetic_c_sweep.sh`
 
 Runs a palette multiplier sweep for `par_relaxed`:
