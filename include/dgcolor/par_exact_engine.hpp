@@ -40,6 +40,8 @@ class ParExactEngine final : public ColoringEngine {
 
  private:
   BatchStats apply_batch_impl(const UpdateBatch& batch);
+  bool attempt_recolor_batch(const std::vector<VertexId>& initial_active,
+                             std::size_t* vertices_touched, std::uint64_t* rounds_attempted);
   [[maybe_unused]] static std::uint64_t deterministic_hash(std::uint64_t seed,
                                                            std::uint64_t round_index, VertexId v,
                                                            std::uint64_t salt = 0);

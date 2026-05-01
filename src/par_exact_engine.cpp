@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include <parlay/parallel.h>
+
 #include "dgcolor/validator.hpp"
 
 namespace dgcolor {
@@ -104,16 +106,151 @@ BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
 
   std::size_t vertices_touched = 0;
   if (has_insert) {
-    recolor_all_greedy_exact();
-    ++fallback_count_;
-    vertices_touched = static_cast<std::size_t>(graph_.num_vertices());
-    vertices_touched_total_ += static_cast<std::uint64_t>(vertices_touched);
+    const std::vector<VertexId> initial_active = collect_conflicted_vertices_from_inserted_edges(batch);
+    if (!initial_active.empty()) {
+      std::uint64_t rounds_attempted = 0;
+      active_vertices_total_ += static_cast<std::uint64_t>(initial_active.size());
+      const bool repaired = attempt_recolor_batch(initial_active, &vertices_touched, &rounds_attempted);
+      repair_rounds_total_ += rounds_attempted;
+      vertices_touched_total_ += static_cast<std::uint64_t>(vertices_touched);
+
+      if (!repaired) {
+        recolor_all_greedy_exact();
+        ++fallback_count_;
+        const std::size_t fallback_touched = static_cast<std::size_t>(graph_.num_vertices());
+        vertices_touched += fallback_touched;
+        vertices_touched_total_ += static_cast<std::uint64_t>(fallback_touched);
+      }
+    }
   }
 
   validate_coloring_or_throw("apply_batch");
   const auto end = std::chrono::steady_clock::now();
   const double seconds = std::chrono::duration<double>(end - start).count();
   return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
+}
+
+bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_active,
+                                           std::size_t* vertices_touched,
+                                           std::uint64_t* rounds_attempted) {
+  static constexpr std::size_t kSequentialThreshold = 128;
+  std::vector<VertexId> active = deduplicate_and_sort_vertices(initial_active);
+  if (active.empty()) {
+    return true;
+  }
+
+  bool used_sequential = false;
+  for (std::uint32_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
+    if (rounds_attempted != nullptr) {
+      ++(*rounds_attempted);
+    }
+    if (vertices_touched != nullptr) {
+      *vertices_touched += active.size();
+    }
+
+    std::vector<unsigned char> active_mask = build_active_membership(active);
+    std::vector<Color> proposed(active.size(), kUncolored);
+    std::vector<unsigned char> safe(active.size(), 0);
+    std::vector<Color> colors_before(active.size(), kUncolored);
+    for (std::size_t i = 0; i < active.size(); ++i) {
+      colors_before[i] = colors_[active[i]];
+    }
+    proposal_count_ += static_cast<std::uint64_t>(active.size());
+
+    const bool sequential_path = active.size() <= kSequentialThreshold;
+    if (sequential_path && !used_sequential) {
+      ++sequential_fast_path_count_;
+      used_sequential = true;
+    }
+
+    if (sequential_path) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        const VertexId v = active[i];
+        const Color offset = deterministic_color_offset(round, v);
+        proposed[i] = first_available_color_with_offset(v, offset);
+      }
+    } else {
+      parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+        const VertexId v = active[i];
+        const Color offset = deterministic_color_offset(round, v);
+        proposed[i] = first_available_color_with_offset(v, offset);
+      });
+    }
+
+    if (sequential_path) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        const VertexId v = active[i];
+        const Color c = proposed[i];
+        if (!color_in_palette_range(c)) {
+          continue;
+        }
+        if (proposal_conflicts_non_active_neighbors(v, c, active_mask)) {
+          continue;
+        }
+        if (proposal_conflicts_active_neighbors(v, c, active_mask, active, proposed)) {
+          continue;
+        }
+        safe[i] = 1;
+      }
+    } else {
+      parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+        const VertexId v = active[i];
+        const Color c = proposed[i];
+        if (!color_in_palette_range(c)) {
+          return;
+        }
+        if (proposal_conflicts_non_active_neighbors(v, c, active_mask)) {
+          return;
+        }
+        if (proposal_conflicts_active_neighbors(v, c, active_mask, active, proposed)) {
+          return;
+        }
+        safe[i] = 1;
+      });
+    }
+
+    if (sequential_path) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        if (!safe[i]) {
+          continue;
+        }
+        const VertexId v = active[i];
+        colors_[v] = proposed[i];
+      }
+    } else {
+      parlay::parallel_for(0, active.size(), [&](std::size_t i) {
+        if (!safe[i]) {
+          return;
+        }
+        const VertexId v = active[i];
+        const Color next = proposed[i];
+        colors_[v] = next;
+      });
+    }
+    for (std::size_t i = 0; i < active.size(); ++i) {
+      if (!safe[i]) {
+        continue;
+      }
+      if (colors_before[i] != proposed[i]) {
+        ++logical_time_;
+        timestamps_[active[i]] = logical_time_;
+        ++commit_count_;
+      }
+    }
+
+    std::vector<VertexId> frontier = active;
+    for (VertexId v : active) {
+      const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+      for (VertexId u : nbrs) {
+        frontier.push_back(u);
+      }
+    }
+    frontier = deduplicate_and_sort_vertices(frontier);
+    active = collect_unresolved_frontier_from_candidates(frontier);
+    unresolved_count_ += static_cast<std::uint64_t>(active.size());
+  }
+
+  return active.empty();
 }
 
 std::uint64_t ParExactEngine::deterministic_hash(std::uint64_t seed, std::uint64_t round_index,

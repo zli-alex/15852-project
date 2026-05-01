@@ -119,25 +119,40 @@ void TestApplyBatchBeforeInitializeThrows() {
   assert(threw);
 }
 
-void TestAcceptedInsertionUpdateAlwaysFallsBackInStep2() {
-  ParExactEngine engine(4, 3, 5, kMaxRounds);
+void TestAcceptedNoConflictInsertionUpdateDoesNotFallback() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));  // deterministic init gives color(0)=0, color(1)=1
+  ParExactEngine engine(4, 3, 5, kMaxRounds, initial);
   engine.initialize_coloring();
   const auto colors_before = engine.colors();
-  const std::size_t edges_before = engine.graph().num_edges();
   const DiagSnapshot diag_before = SnapshotDiag(engine);
 
+  const UpdateStats stats = engine.apply_update(Insert(2, 1));
+  assert(stats.applied);
+  assert(stats.edges_changed == 1);
+  assert(stats.vertices_touched == 0);
+  assert(engine.graph().num_edges() == 2);
+  AssertColoringValid(engine);
+  assert(engine.colors() == colors_before);
+  assert(SameDiag(diag_before, SnapshotDiag(engine)));
+}
+
+void TestAcceptedConflictInsertionUpdateValidatesAndTracksRepair() {
+  ParExactEngine engine(4, 3, 6, kMaxRounds);
+  engine.initialize_coloring();
+  const DiagSnapshot diag_before = SnapshotDiag(engine);
+
+  // Initially all vertices are color 0 in empty graph; this insert creates a direct conflict.
   const UpdateStats stats = engine.apply_update(Insert(0, 1));
   assert(stats.applied);
   assert(stats.edges_changed == 1);
-  assert(stats.vertices_touched == static_cast<std::size_t>(engine.graph().num_vertices()));
-  assert(engine.graph().num_edges() == edges_before + 1);
   AssertColoringValid(engine);
-  assert(!engine.colors().empty());
-  // Step 2 policy: any accepted insertion triggers full greedy exact recolor.
-  assert(engine.fallback_count() == diag_before.fallback_count + 1);
-  assert(engine.vertices_touched_total() ==
-         diag_before.vertices_touched_total + engine.graph().num_vertices());
-  assert(colors_before.size() == engine.colors().size());
+  assert(engine.active_vertices_total() >= diag_before.active_vertices_total + 1);
+  assert(engine.repair_rounds_total() >= diag_before.repair_rounds_total + 1);
+  assert(engine.proposal_count() >= diag_before.proposal_count + 1);
+  assert(engine.vertices_touched_total() >= diag_before.vertices_touched_total + 1);
+  assert(engine.fallback_count() == diag_before.fallback_count ||
+         engine.fallback_count() == diag_before.fallback_count + 1);
 }
 
 void TestAcceptedDeletionUpdateKeepsColorsAndDiagnostics() {
@@ -209,26 +224,53 @@ void TestRejectedMissingDeletionPreservesState() {
   assert(SameDiag(diag_before, SnapshotDiag(engine)));
 }
 
-void TestAcceptedInsertionBatchFallsBackOnce() {
+void TestAcceptedBatchValidStyleInsertionBatchNoConflictSkipsRepair() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(2, 3));
+  initial.push_back(Insert(4, 5));
+  ParExactEngine engine(6, 5, 13, kMaxRounds, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const DiagSnapshot diag_before = SnapshotDiag(engine);
+
+  UpdateBatch batch;
+  // Both inserts connect opposite-color endpoints, so no recolor is needed.
+  batch.push_back(Insert(0, 3));
+  batch.push_back(Insert(2, 5));
+  const BatchStats stats = engine.apply_batch(batch);
+  assert(stats.applied);
+  assert(stats.updates == batch.size());
+  assert(stats.edges_changed == batch.size());
+  assert(stats.vertices_touched == 0);
+  AssertColoringValid(engine);
+  assert(engine.colors() == colors_before);
+  assert(SameDiag(diag_before, SnapshotDiag(engine)));
+}
+
+void TestAcceptedConflictHeavyStyleInsertionBatchTracksRepair() {
   ParExactEngine engine(6, 5, 13, kMaxRounds);
   engine.initialize_coloring();
   const DiagSnapshot diag_before = SnapshotDiag(engine);
 
   UpdateBatch batch;
+  // Conflict-heavy style: endpoints start with equal color in empty graph.
   batch.push_back(Insert(0, 1));
   batch.push_back(Insert(2, 3));
   const BatchStats stats = engine.apply_batch(batch);
   assert(stats.applied);
   assert(stats.updates == batch.size());
   assert(stats.edges_changed == batch.size());
-  assert(stats.vertices_touched == static_cast<std::size_t>(engine.graph().num_vertices()));
   AssertColoringValid(engine);
-  assert(engine.fallback_count() == diag_before.fallback_count + 1);
-  assert(engine.vertices_touched_total() ==
-         diag_before.vertices_touched_total + engine.graph().num_vertices());
+  assert(engine.active_vertices_total() >= diag_before.active_vertices_total + 1);
+  assert(engine.repair_rounds_total() >= diag_before.repair_rounds_total + 1);
+  assert(engine.proposal_count() >= diag_before.proposal_count + 1);
+  assert(engine.vertices_touched_total() >= diag_before.vertices_touched_total + 1);
+  assert(engine.fallback_count() == diag_before.fallback_count ||
+         engine.fallback_count() == diag_before.fallback_count + 1);
 }
 
-void TestAcceptedMixedBatchFallsBackOnce() {
+void TestAcceptedMixedBatchValidatesAndMayFallback() {
   UpdateBatch initial;
   initial.push_back(Insert(0, 1));
   initial.push_back(Insert(2, 3));
@@ -242,11 +284,10 @@ void TestAcceptedMixedBatchFallsBackOnce() {
   const BatchStats stats = engine.apply_batch(batch);
   assert(stats.applied);
   assert(stats.edges_changed == batch.size());
-  assert(stats.vertices_touched == static_cast<std::size_t>(engine.graph().num_vertices()));
   AssertColoringValid(engine);
-  assert(engine.fallback_count() == diag_before.fallback_count + 1);
-  assert(engine.vertices_touched_total() ==
-         diag_before.vertices_touched_total + engine.graph().num_vertices());
+  assert(engine.fallback_count() == diag_before.fallback_count ||
+         engine.fallback_count() == diag_before.fallback_count + 1);
+  assert(engine.vertices_touched_total() >= diag_before.vertices_touched_total);
 }
 
 void TestAcceptedDeletionOnlyBatchKeepsColorsAndDiagnostics() {
@@ -383,13 +424,15 @@ int main() {
   TestMaxRoundsZeroThrows();
   TestApplyUpdateBeforeInitializeThrows();
   TestApplyBatchBeforeInitializeThrows();
-  TestAcceptedInsertionUpdateAlwaysFallsBackInStep2();
+  TestAcceptedNoConflictInsertionUpdateDoesNotFallback();
+  TestAcceptedConflictInsertionUpdateValidatesAndTracksRepair();
   TestAcceptedDeletionUpdateKeepsColorsAndDiagnostics();
   TestRejectedLoopInsertionPreservesState();
   TestRejectedDuplicateInsertionPreservesState();
   TestRejectedMissingDeletionPreservesState();
-  TestAcceptedInsertionBatchFallsBackOnce();
-  TestAcceptedMixedBatchFallsBackOnce();
+  TestAcceptedBatchValidStyleInsertionBatchNoConflictSkipsRepair();
+  TestAcceptedConflictHeavyStyleInsertionBatchTracksRepair();
+  TestAcceptedMixedBatchValidatesAndMayFallback();
   TestAcceptedDeletionOnlyBatchKeepsColorsAndDiagnostics();
   TestRejectedDuplicateSameBatchEdgePreservesState();
   TestRejectedLoopBatchPreservesState();
