@@ -12,6 +12,15 @@
 
 namespace dgcolor {
 
+namespace {
+
+double SecondsBetween(const std::chrono::steady_clock::time_point& start,
+                      const std::chrono::steady_clock::time_point& end) {
+  return std::chrono::duration<double>(end - start).count();
+}
+
+}  // namespace
+
 ParExactEngine::ParExactEngine(VertexId num_vertices, Degree delta_cap, std::uint64_t seed,
                                std::uint32_t max_rounds)
     : graph_(num_vertices, delta_cap),
@@ -89,7 +98,10 @@ BatchStats ParExactEngine::apply_batch(const UpdateBatch& batch) {
 
 BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
   const auto start = std::chrono::steady_clock::now();
+  const auto graph_apply_start = std::chrono::steady_clock::now();
   const BatchApplyResult result = graph_.apply_batch(batch);
+  diagnostics_.graph_apply_seconds +=
+      SecondsBetween(graph_apply_start, std::chrono::steady_clock::now());
   if (result.status != UpdateStatus::Ok) {
     const auto end = std::chrono::steady_clock::now();
     const double seconds = std::chrono::duration<double>(end - start).count();
@@ -106,11 +118,16 @@ BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
 
   std::size_t vertices_touched = 0;
   if (has_insert) {
+    const auto active_build_start = std::chrono::steady_clock::now();
     const std::vector<VertexId> initial_active = collect_conflicted_vertices_from_inserted_edges(batch);
+    diagnostics_.active_build_seconds +=
+        SecondsBetween(active_build_start, std::chrono::steady_clock::now());
     if (!initial_active.empty()) {
       std::uint64_t rounds_attempted = 0;
       active_vertices_total_ += static_cast<std::uint64_t>(initial_active.size());
+      const auto repair_start = std::chrono::steady_clock::now();
       const bool repaired = attempt_recolor_batch(initial_active, &vertices_touched, &rounds_attempted);
+      diagnostics_.repair_seconds += SecondsBetween(repair_start, std::chrono::steady_clock::now());
       repair_rounds_total_ += rounds_attempted;
       vertices_touched_total_ += static_cast<std::uint64_t>(vertices_touched);
 
@@ -124,7 +141,12 @@ BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
     }
   }
 
-  validate_coloring_or_throw("apply_batch");
+  if (validate_after_apply_) {
+    const auto validation_start = std::chrono::steady_clock::now();
+    validate_coloring_or_throw("apply_batch");
+    diagnostics_.internal_validation_seconds +=
+        SecondsBetween(validation_start, std::chrono::steady_clock::now());
+  }
   const auto end = std::chrono::steady_clock::now();
   const double seconds = std::chrono::duration<double>(end - start).count();
   return BatchStats{true, batch.size(), result.updates_applied, vertices_touched, seconds};
@@ -138,6 +160,7 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
   if (active.empty()) {
     return true;
   }
+  ++diagnostics_.repair_calls;
 
   bool used_sequential = false;
   for (std::uint32_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
@@ -149,6 +172,12 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
     }
 
     std::vector<unsigned char> active_mask = build_active_membership(active);
+    std::vector<int> active_index(graph_.num_vertices(), -1);
+    for (std::size_t i = 0; i < active.size(); ++i) {
+      if (active[i] < graph_.num_vertices()) {
+        active_index[active[i]] = static_cast<int>(i);
+      }
+    }
     std::vector<Color> proposed(active.size(), kUncolored);
     std::vector<unsigned char> safe(active.size(), 0);
     std::vector<Color> colors_before(active.size(), kUncolored);
@@ -156,6 +185,10 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
       colors_before[i] = colors_[active[i]];
     }
     proposal_count_ += static_cast<std::uint64_t>(active.size());
+    diagnostics_.active_size_round_total += static_cast<std::uint64_t>(active.size());
+    if (active.size() > diagnostics_.max_active_size) {
+      diagnostics_.max_active_size = static_cast<std::uint64_t>(active.size());
+    }
 
     const bool sequential_path = active.size() <= kSequentialThreshold;
     if (sequential_path && !used_sequential) {
@@ -187,7 +220,7 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
         if (proposal_conflicts_non_active_neighbors(v, c, active_mask)) {
           continue;
         }
-        if (proposal_conflicts_active_neighbors(v, c, active_mask, active, proposed)) {
+        if (proposal_conflicts_active_neighbors(v, c, active_mask, active_index, proposed)) {
           continue;
         }
         safe[i] = 1;
@@ -202,7 +235,7 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
         if (proposal_conflicts_non_active_neighbors(v, c, active_mask)) {
           return;
         }
-        if (proposal_conflicts_active_neighbors(v, c, active_mask, active, proposed)) {
+        if (proposal_conflicts_active_neighbors(v, c, active_mask, active_index, proposed)) {
           return;
         }
         safe[i] = 1;
@@ -314,6 +347,18 @@ std::uint64_t ParExactEngine::vertices_touched_total() const {
   return vertices_touched_total_;
 }
 
+void ParExactEngine::set_validate_after_apply(bool enabled) {
+  validate_after_apply_ = enabled;
+}
+
+bool ParExactEngine::validate_after_apply() const {
+  return validate_after_apply_;
+}
+
+ParExactDiagnostics ParExactEngine::diagnostics() const {
+  return diagnostics_;
+}
+
 std::uint64_t ParExactEngine::mix_u64(std::uint64_t x) {
   x ^= x >> 30U;
   x *= 0xbf58476d1ce4e5b9ULL;
@@ -423,24 +468,14 @@ bool ParExactEngine::proposal_conflicts_non_active_neighbors(
 
 bool ParExactEngine::proposal_conflicts_active_neighbors(
     VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask,
-    const std::vector<VertexId>& active, const std::vector<Color>& proposed_colors) const {
+    const std::vector<int>& active_index, const std::vector<Color>& proposed_colors) const {
   if (!color_in_palette_range(proposed_color)) {
     return true;
-  }
-  if (active.size() != proposed_colors.size()) {
-    return true;
-  }
-
-  std::vector<int> active_index(graph_.num_vertices(), -1);
-  for (std::size_t i = 0; i < active.size(); ++i) {
-    if (active[i] < graph_.num_vertices()) {
-      active_index[active[i]] = static_cast<int>(i);
-    }
   }
 
   const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
   for (VertexId u : nbrs) {
-    if (u >= active_mask.size() || !active_mask[u]) {
+    if (u >= active_mask.size() || !active_mask[u] || u >= active_index.size()) {
       continue;
     }
     const int j = active_index[u];

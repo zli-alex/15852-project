@@ -92,7 +92,10 @@ UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
   }
 
   const auto start = std::chrono::steady_clock::now();
+  const auto graph_apply_start = std::chrono::steady_clock::now();
   const UpdateResult result = graph_.apply_update(update);
+  diagnostics_.graph_apply_seconds +=
+      SecondsBetween(graph_apply_start, std::chrono::steady_clock::now());
   if (result.status != UpdateStatus::Ok) {
     const auto end = std::chrono::steady_clock::now();
     const double seconds = std::chrono::duration<double>(end - start).count();
@@ -130,7 +133,12 @@ UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
     }
   }
 
-  validate_coloring_or_throw("apply_update");
+  if (validate_after_apply_) {
+    const auto validation_start = std::chrono::steady_clock::now();
+    validate_coloring_or_throw("apply_update");
+    diagnostics_.internal_validation_seconds +=
+        SecondsBetween(validation_start, std::chrono::steady_clock::now());
+  }
 
   const auto end = std::chrono::steady_clock::now();
   const double seconds = std::chrono::duration<double>(end - start).count();
@@ -144,7 +152,10 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
   }
 
   const auto start = std::chrono::steady_clock::now();
+  const auto graph_apply_start = std::chrono::steady_clock::now();
   const BatchApplyResult result = graph_.apply_batch(batch);
+  diagnostics_.graph_apply_seconds +=
+      SecondsBetween(graph_apply_start, std::chrono::steady_clock::now());
   if (result.status != UpdateStatus::Ok) {
     const auto end = std::chrono::steady_clock::now();
     const double seconds = std::chrono::duration<double>(end - start).count();
@@ -186,7 +197,12 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
       vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
     }
   }
-  validate_coloring_or_throw("apply_batch");
+  if (validate_after_apply_) {
+    const auto validation_start = std::chrono::steady_clock::now();
+    validate_coloring_or_throw("apply_batch");
+    diagnostics_.internal_validation_seconds +=
+        SecondsBetween(validation_start, std::chrono::steady_clock::now());
+  }
 
   const auto end = std::chrono::steady_clock::now();
   const double seconds = std::chrono::duration<double>(end - start).count();
@@ -223,6 +239,14 @@ void ParRelaxedEngine::set_diagnostics_enabled(bool enabled) {
 
 bool ParRelaxedEngine::diagnostics_enabled() const {
   return diagnostics_enabled_;
+}
+
+void ParRelaxedEngine::set_validate_after_apply(bool enabled) {
+  validate_after_apply_ = enabled;
+}
+
+bool ParRelaxedEngine::validate_after_apply() const {
+  return validate_after_apply_;
 }
 
 ParRelaxedDiagnostics ParRelaxedEngine::diagnostics() const {
@@ -380,6 +404,10 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
     }
     if (vertices_touched != nullptr) {
       *vertices_touched += active.size();
+    }
+    diagnostics_.active_size_round_total += static_cast<std::uint64_t>(active.size());
+    if (active.size() > diagnostics_.max_active_size) {
+      diagnostics_.max_active_size = static_cast<std::uint64_t>(active.size());
     }
 
     const VertexId n = graph_.num_vertices();

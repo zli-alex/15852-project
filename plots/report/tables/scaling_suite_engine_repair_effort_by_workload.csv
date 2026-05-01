@@ -1,0 +1,21 @@
+workload_batch,engine_name,repair_effort_value,repair_effort_value_std,repair_effort_value_n
+valid_insertions (b=1),seq_baseline,1000000.0,0.0,10
+valid_insertions (b=1),seq_exact,571.8,14.89071298942172,10
+valid_insertions (b=1),par_relaxed,336.1,4.557045826702497,10
+valid_insertions (b=1),par_exact,505.4,5.253570214625481,10
+mixed_valid (b=1),seq_baseline,520300.0,14522.396496446445,10
+mixed_valid (b=1),seq_exact,372.6,3.2041639575194445,10
+mixed_valid (b=1),par_relaxed,253.5,1.7795130420052194,10
+mixed_valid (b=1),par_exact,345.1,0.8755950357709077,10
+batch_valid (b=16),seq_baseline,64000.0,0.0,10
+batch_valid (b=16),seq_exact,590.3,12.658330590300338,10
+batch_valid (b=16),par_relaxed,61.8,1.3165611772087669,10
+batch_valid (b=16),par_exact,64.0,0.0,10
+conflict_heavy (b=1),seq_baseline,1000000.0,0.0,10
+conflict_heavy (b=1),seq_exact,1000.0,0.0,10
+conflict_heavy (b=1),par_relaxed,1000.0,0.0,10
+conflict_heavy (b=1),par_exact,1000.0,0.0,10
+conflict_heavy (b=16),seq_baseline,64000.0,0.0,10
+conflict_heavy (b=16),seq_exact,1024.0,0.0,10
+conflict_heavy (b=16),par_relaxed,64.7,0.48304589153964644,10
+conflict_heavy (b=16),par_exact,66.6,0.9660917830792938,10

@@ -405,6 +405,8 @@ int main(int argc, char** argv) {
   std::size_t generator_same_color_chosen = 0;
   std::size_t generator_same_color_fallbacks = 0;
   std::size_t vertices_touched_total = 0;
+  double engine_apply_seconds = 0.0;
+  double graph_apply_seconds = 0.0;
   std::uint32_t palette_multiplier_out = 0;
   dgcolor::Color palette_size_out = 0;
   std::uint32_t max_rounds_out = 0;
@@ -454,6 +456,9 @@ int main(int argc, char** argv) {
     par_exact_engine =
         std::make_unique<dgcolor::ParExactEngine>(cfg.vertices, cfg.delta_cap, cfg.seed, cfg.max_rounds);
     par_exact_engine->initialize_coloring();
+    if (cfg.validate_final_only) {
+      par_exact_engine->set_validate_after_apply(false);
+    }
     initial_edges = par_exact_engine->graph().num_edges();
     par_exact_palette_size_out = par_exact_engine->palette_size();
     par_exact_max_rounds_out = par_exact_engine->max_rounds();
@@ -462,6 +467,9 @@ int main(int argc, char** argv) {
         cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds);
     par_relaxed_engine->initialize_coloring();
     par_relaxed_engine->set_diagnostics_enabled(cfg.diagnostics);
+    if (cfg.validate_final_only) {
+      par_relaxed_engine->set_validate_after_apply(false);
+    }
     initial_edges = par_relaxed_engine->graph().num_edges();
     palette_multiplier_out = par_relaxed_engine->palette_multiplier();
     palette_size_out = par_relaxed_engine->palette_size();
@@ -488,22 +496,30 @@ int main(int argc, char** argv) {
       ++updates_generated;
       bool update_applied = false;
       if (graph_only) {
+        const auto apply_start = std::chrono::steady_clock::now();
         const dgcolor::UpdateResult result = graph_only->apply_update(update);
+        const double apply_seconds = SecondsSince(apply_start);
+        graph_apply_seconds += apply_seconds;
+        engine_apply_seconds += apply_seconds;
         update_applied = (result.status == dgcolor::UpdateStatus::Ok);
       } else if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::UpdateStats stats = par_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       }
@@ -554,18 +570,22 @@ int main(int argc, char** argv) {
       bool update_applied = false;
       if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::UpdateStats stats = par_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       }
@@ -655,21 +675,25 @@ int main(int argc, char** argv) {
       std::size_t edges_changed = 0;
       if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_ok = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_ok = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::BatchStats stats = par_exact_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_ok = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_ok = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
@@ -724,22 +748,30 @@ int main(int argc, char** argv) {
       ++updates_generated;
       bool update_applied = false;
       if (graph_only) {
+        const auto apply_start = std::chrono::steady_clock::now();
         const dgcolor::UpdateResult result = graph_only->apply_update(update);
+        const double apply_seconds = SecondsSince(apply_start);
+        graph_apply_seconds += apply_seconds;
+        engine_apply_seconds += apply_seconds;
         update_applied = (result.status == dgcolor::UpdateStatus::Ok);
       } else if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::UpdateStats stats = par_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         update_applied = stats.applied;
         vertices_touched_total += stats.vertices_touched;
       }
@@ -797,51 +829,67 @@ int main(int argc, char** argv) {
       if (batch.size() == 1) {
         const dgcolor::EdgeUpdate update = batch[0];
         if (graph_only) {
+          const auto apply_start = std::chrono::steady_clock::now();
           const dgcolor::UpdateResult result = graph_only->apply_update(update);
+          const double apply_seconds = SecondsSince(apply_start);
+          graph_apply_seconds += apply_seconds;
+          engine_apply_seconds += apply_seconds;
           batch_applied = (result.status == dgcolor::UpdateStatus::Ok);
           edges_changed = batch_applied ? 1 : 0;
         } else if (seq_engine) {
           const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+          engine_apply_seconds += stats.seconds;
           batch_applied = stats.applied;
           edges_changed = stats.edges_changed;
           vertices_touched_total += stats.vertices_touched;
         } else if (seq_exact_engine) {
           const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+          engine_apply_seconds += stats.seconds;
           batch_applied = stats.applied;
           edges_changed = stats.edges_changed;
           vertices_touched_total += stats.vertices_touched;
         } else if (par_exact_engine) {
           const dgcolor::UpdateStats stats = par_exact_engine->apply_update(update);
+          engine_apply_seconds += stats.seconds;
           batch_applied = stats.applied;
           edges_changed = stats.edges_changed;
           vertices_touched_total += stats.vertices_touched;
         } else {
           const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+          engine_apply_seconds += stats.seconds;
           batch_applied = stats.applied;
           edges_changed = stats.edges_changed;
           vertices_touched_total += stats.vertices_touched;
         }
       } else if (graph_only) {
+        const auto apply_start = std::chrono::steady_clock::now();
         const dgcolor::BatchApplyResult result = graph_only->apply_batch(batch);
+        const double apply_seconds = SecondsSince(apply_start);
+        graph_apply_seconds += apply_seconds;
+        engine_apply_seconds += apply_seconds;
         batch_applied = (result.status == dgcolor::UpdateStatus::Ok);
         edges_changed = batch_applied ? result.updates_applied : 0;
       } else if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_applied = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_applied = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::BatchStats stats = par_exact_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_applied = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         batch_applied = stats.applied;
         edges_changed = stats.edges_changed;
         vertices_touched_total += stats.vertices_touched;
@@ -863,7 +911,11 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < cfg.updates; ++i) {
       const dgcolor::EdgeUpdate update = RandomAttempt(&rng, cfg.vertices);
       if (graph_only) {
+        const auto apply_start = std::chrono::steady_clock::now();
         const dgcolor::UpdateResult result = graph_only->apply_update(update);
+        const double apply_seconds = SecondsSince(apply_start);
+        graph_apply_seconds += apply_seconds;
+        engine_apply_seconds += apply_seconds;
         if (result.status == dgcolor::UpdateStatus::Ok) {
           ++applied;
         } else {
@@ -871,6 +923,7 @@ int main(int argc, char** argv) {
         }
       } else if (seq_engine) {
         const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           ++applied;
         } else {
@@ -879,6 +932,7 @@ int main(int argc, char** argv) {
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           ++applied;
         } else {
@@ -887,6 +941,7 @@ int main(int argc, char** argv) {
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::UpdateStats stats = par_exact_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           ++applied;
         } else {
@@ -895,6 +950,7 @@ int main(int argc, char** argv) {
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           ++applied;
         } else {
@@ -917,7 +973,11 @@ int main(int argc, char** argv) {
       }
 
       if (graph_only) {
+        const auto apply_start = std::chrono::steady_clock::now();
         const dgcolor::BatchApplyResult result = graph_only->apply_batch(batch);
+        const double apply_seconds = SecondsSince(apply_start);
+        graph_apply_seconds += apply_seconds;
+        engine_apply_seconds += apply_seconds;
         if (result.status == dgcolor::UpdateStatus::Ok) {
           applied += result.updates_applied;
         } else {
@@ -925,6 +985,7 @@ int main(int argc, char** argv) {
         }
       } else if (seq_engine) {
         const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           applied += stats.edges_changed;
           rejected += (batch.size() - stats.edges_changed);
@@ -934,6 +995,7 @@ int main(int argc, char** argv) {
         vertices_touched_total += stats.vertices_touched;
       } else if (seq_exact_engine) {
         const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           applied += stats.edges_changed;
           rejected += (batch.size() - stats.edges_changed);
@@ -943,6 +1005,7 @@ int main(int argc, char** argv) {
         vertices_touched_total += stats.vertices_touched;
       } else if (par_exact_engine) {
         const dgcolor::BatchStats stats = par_exact_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           applied += stats.edges_changed;
           rejected += (batch.size() - stats.edges_changed);
@@ -952,6 +1015,7 @@ int main(int argc, char** argv) {
         vertices_touched_total += stats.vertices_touched;
       } else {
         const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
+        engine_apply_seconds += stats.seconds;
         if (stats.applied) {
           applied += stats.edges_changed;
           rejected += (batch.size() - stats.edges_changed);
@@ -1079,6 +1143,11 @@ int main(int argc, char** argv) {
     fallback_count_out = par_relaxed_engine->fallback_count();
   }
   const double validate_seconds = SecondsSince(validate_start);
+  if (par_exact_engine) {
+    graph_apply_seconds = par_exact_engine->diagnostics().graph_apply_seconds;
+  } else if (par_relaxed_engine) {
+    graph_apply_seconds = par_relaxed_engine->diagnostics().graph_apply_seconds;
+  }
 
   const double throughput =
       (update_seconds > 0.0) ? (static_cast<double>(cfg.updates) / update_seconds) : 0.0;
@@ -1114,7 +1183,11 @@ int main(int argc, char** argv) {
   PrintMetric("max_generation_attempts", cfg.max_generation_attempts);
   PrintMetric("build_seconds", build_seconds);
   PrintMetric("update_seconds", update_seconds);
+  PrintMetric("generation_seconds", update_seconds - engine_apply_seconds);
+  PrintMetric("engine_apply_seconds", engine_apply_seconds);
+  PrintMetric("graph_apply_seconds", graph_apply_seconds);
   PrintMetric("validate_seconds", validate_seconds);
+  PrintMetric("validate_final_only", cfg.validate_final_only ? 1 : 0);
   PrintMetric("throughput_updates_per_second", throughput);
   PrintMetric("max_degree_observed", max_degree);
   PrintMetric("graph_validated", graph_validated ? 1 : 0);
@@ -1128,8 +1201,13 @@ int main(int argc, char** argv) {
     PrintMetric("max_rounds", max_rounds_out);
     PrintMetric("total_rounds", total_rounds_out);
     PrintMetric("fallback_count", fallback_count_out);
+    const dgcolor::ParRelaxedDiagnostics diagnostics = par_relaxed_engine->diagnostics();
+    PrintMetric("repair_seconds", diagnostics.repair_seconds);
+    PrintMetric("active_build_seconds", diagnostics.active_build_seconds);
+    PrintMetric("internal_validation_seconds", diagnostics.internal_validation_seconds);
+    PrintMetric("max_active_size", diagnostics.max_active_size);
+    PrintMetric("active_size_round_total", diagnostics.active_size_round_total);
     if (cfg.diagnostics) {
-      const dgcolor::ParRelaxedDiagnostics diagnostics = par_relaxed_engine->diagnostics();
       PrintMetric("repair_calls", diagnostics.repair_calls);
       PrintMetric("repair_rounds", diagnostics.repair_rounds);
       PrintMetric("sequential_repair_calls", diagnostics.sequential_repair_calls);
@@ -1139,8 +1217,6 @@ int main(int argc, char** argv) {
       PrintMetric("conflicted_vertices_initial_total", diagnostics.conflicted_vertices_initial_total);
       PrintMetric("neighbor_scans", diagnostics.neighbor_scans);
       PrintMetric("commits_total", diagnostics.commits_total);
-      PrintMetric("repair_seconds", diagnostics.repair_seconds);
-      PrintMetric("active_build_seconds", diagnostics.active_build_seconds);
     }
   }
   if (seq_exact_engine) {
@@ -1152,6 +1228,7 @@ int main(int argc, char** argv) {
     PrintMetric("level_conflict_choices", seq_exact_level_conflict_choices_out);
   }
   if (par_exact_engine) {
+    const dgcolor::ParExactDiagnostics diagnostics = par_exact_engine->diagnostics();
     PrintMetric("palette_size", par_exact_palette_size_out);
     PrintMetric("max_rounds", par_exact_max_rounds_out);
     PrintMetric("active_vertices_total", par_exact_active_vertices_total_out);
@@ -1161,6 +1238,12 @@ int main(int argc, char** argv) {
     PrintMetric("commit_count", par_exact_commit_count_out);
     PrintMetric("unresolved_count", par_exact_unresolved_count_out);
     PrintMetric("sequential_fast_path_count", par_exact_sequential_fast_path_count_out);
+    PrintMetric("repair_calls", diagnostics.repair_calls);
+    PrintMetric("repair_seconds", diagnostics.repair_seconds);
+    PrintMetric("active_build_seconds", diagnostics.active_build_seconds);
+    PrintMetric("internal_validation_seconds", diagnostics.internal_validation_seconds);
+    PrintMetric("max_active_size", diagnostics.max_active_size);
+    PrintMetric("active_size_round_total", diagnostics.active_size_round_total);
   }
 
   if (!graph_validated) {

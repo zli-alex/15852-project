@@ -10,6 +10,16 @@
 
 namespace dgcolor {
 
+struct ParExactDiagnostics {
+  std::uint64_t repair_calls{0};
+  std::uint64_t max_active_size{0};
+  std::uint64_t active_size_round_total{0};
+  double graph_apply_seconds{0.0};
+  double repair_seconds{0.0};
+  double active_build_seconds{0.0};
+  double internal_validation_seconds{0.0};
+};
+
 class ParExactEngine final : public ColoringEngine {
  public:
   ParExactEngine(VertexId num_vertices, Degree delta_cap, std::uint64_t seed,
@@ -37,6 +47,9 @@ class ParExactEngine final : public ColoringEngine {
   std::uint64_t unresolved_count() const;
   std::uint64_t sequential_fast_path_count() const;
   std::uint64_t vertices_touched_total() const;
+  void set_validate_after_apply(bool enabled);
+  bool validate_after_apply() const;
+  ParExactDiagnostics diagnostics() const;
 
  private:
   BatchStats apply_batch_impl(const UpdateBatch& batch);
@@ -61,7 +74,7 @@ class ParExactEngine final : public ColoringEngine {
       VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask) const;
   [[maybe_unused]] bool proposal_conflicts_active_neighbors(
       VertexId v, Color proposed_color, const std::vector<unsigned char>& active_mask,
-      const std::vector<VertexId>& active, const std::vector<Color>& proposed_colors) const;
+      const std::vector<int>& active_index, const std::vector<Color>& proposed_colors) const;
   [[maybe_unused]] std::vector<VertexId> collect_unresolved_frontier_from_candidates(
       const std::vector<VertexId>& candidates) const;
   Color greedy_color_for_vertex(VertexId v) const;
@@ -77,6 +90,7 @@ class ParExactEngine final : public ColoringEngine {
   std::uint32_t max_rounds_{0};
   Timestamp logical_time_{0};
   bool initialized_{false};
+  bool validate_after_apply_{true};
 
   std::uint64_t active_vertices_total_{0};
   std::uint64_t repair_rounds_total_{0};
@@ -86,6 +100,7 @@ class ParExactEngine final : public ColoringEngine {
   std::uint64_t unresolved_count_{0};
   std::uint64_t sequential_fast_path_count_{0};
   std::uint64_t vertices_touched_total_{0};
+  mutable ParExactDiagnostics diagnostics_;
 };
 
 }  // namespace dgcolor

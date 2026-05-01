@@ -1,0 +1,21 @@
+workload_batch,engine_name,update_seconds,update_seconds_std,update_seconds_n
+valid_insertions (b=1),seq_baseline,0.1586648,0.02185012542450654,10
+valid_insertions (b=1),seq_exact,0.2728257,0.01377892696233394,10
+valid_insertions (b=1),par_relaxed,0.0680298,0.023574956539231768,10
+valid_insertions (b=1),par_exact,0.3777437,0.021173762852748787,10
+mixed_valid (b=1),seq_baseline,0.06547707,0.022739918736982234,10
+mixed_valid (b=1),seq_exact,0.10508284999999999,0.024681356611474536,10
+mixed_valid (b=1),par_relaxed,0.039085510000000004,0.030222925509452075,10
+mixed_valid (b=1),par_exact,0.12848120000000002,0.020825982643483284,10
+batch_valid (b=16),seq_baseline,0.03299685,0.026403046342430934,10
+batch_valid (b=16),seq_exact,0.03007766,0.019074784902075422,10
+batch_valid (b=16),par_relaxed,0.01711564,0.017710011264580147,10
+batch_valid (b=16),par_exact,0.04006863,0.025496044945792846,10
+conflict_heavy (b=1),seq_baseline,0.1553888,0.01238552178777929,10
+conflict_heavy (b=1),seq_exact,0.2739216,0.022451710967714193,10
+conflict_heavy (b=1),par_relaxed,0.068065,0.017248707049708583,10
+conflict_heavy (b=1),par_exact,0.3812043,0.021954425036374292,10
+conflict_heavy (b=16),seq_baseline,0.02328873,0.020867351471034044,10
+conflict_heavy (b=16),seq_exact,0.03439993,0.02147341349892156,10
+conflict_heavy (b=16),par_relaxed,0.0313974,0.028510720367375265,10
+conflict_heavy (b=16),par_exact,0.034684139999999995,0.020050091172095285,10

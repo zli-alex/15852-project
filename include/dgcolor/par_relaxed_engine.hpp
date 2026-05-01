@@ -20,8 +20,12 @@ struct ParRelaxedDiagnostics {
   std::uint64_t conflicted_vertices_initial_total{0};
   std::uint64_t neighbor_scans{0};
   std::uint64_t commits_total{0};
+  std::uint64_t max_active_size{0};
+  std::uint64_t active_size_round_total{0};
+  double graph_apply_seconds{0.0};
   double repair_seconds{0.0};
   double active_build_seconds{0.0};
+  double internal_validation_seconds{0.0};
 };
 
 class ParRelaxedEngine final : public ColoringEngine {
@@ -50,6 +54,8 @@ class ParRelaxedEngine final : public ColoringEngine {
   std::uint64_t vertices_touched_total() const;
   void set_diagnostics_enabled(bool enabled);
   bool diagnostics_enabled() const;
+  void set_validate_after_apply(bool enabled);
+  bool validate_after_apply() const;
   ParRelaxedDiagnostics diagnostics() const;
 
  private:
@@ -82,6 +88,7 @@ class ParRelaxedEngine final : public ColoringEngine {
   std::uint64_t fallback_count_{0};
   std::uint64_t vertices_touched_total_{0};
   bool diagnostics_enabled_{false};
+  bool validate_after_apply_{true};
   mutable ParRelaxedDiagnostics diagnostics_;
 };
 

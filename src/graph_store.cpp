@@ -119,10 +119,9 @@ UpdateResult AdjacencyGraphStore::apply_update(const EdgeUpdate& update) {
 }
 
 BatchApplyResult AdjacencyGraphStore::apply_batch(const UpdateBatch& batch) {
-  std::vector<std::unordered_set<VertexId>> temp = adjacency_;
-  std::size_t temp_num_edges = num_edges_;
   std::unordered_set<std::uint64_t> seen_edges;
   seen_edges.reserve(batch.size());
+  std::vector<int> degree_delta(num_vertices_, 0);
 
   for (const EdgeUpdate& update : batch) {
     if (!IsValidVertex(update.u, num_vertices_) || !IsValidVertex(update.v, num_vertices_)) {
@@ -140,29 +139,40 @@ BatchApplyResult AdjacencyGraphStore::apply_batch(const UpdateBatch& batch) {
     }
     seen_edges.insert(edge_key);
 
-    const bool edge_exists = temp[e.u].find(e.v) != temp[e.u].end();
+    const bool edge_exists = adjacency_[e.u].find(e.v) != adjacency_[e.u].end();
     if (update.kind == UpdateKind::Insert) {
       if (edge_exists) {
         return BatchApplyResult{UpdateStatus::DuplicateEdge, "edge already exists", 0};
       }
-      if (temp[e.u].size() >= delta_cap_ || temp[e.v].size() >= delta_cap_) {
+      const int next_degree_u = static_cast<int>(adjacency_[e.u].size()) + degree_delta[e.u] + 1;
+      const int next_degree_v = static_cast<int>(adjacency_[e.v].size()) + degree_delta[e.v] + 1;
+      if (next_degree_u > static_cast<int>(delta_cap_) ||
+          next_degree_v > static_cast<int>(delta_cap_)) {
         return BatchApplyResult{UpdateStatus::DegreeCapExceeded, "degree cap exceeded", 0};
       }
-      temp[e.u].insert(e.v);
-      temp[e.v].insert(e.u);
-      ++temp_num_edges;
+      ++degree_delta[e.u];
+      ++degree_delta[e.v];
     } else {
       if (!edge_exists) {
         return BatchApplyResult{UpdateStatus::MissingEdge, "edge does not exist", 0};
       }
-      temp[e.u].erase(e.v);
-      temp[e.v].erase(e.u);
-      --temp_num_edges;
+      --degree_delta[e.u];
+      --degree_delta[e.v];
     }
   }
 
-  adjacency_.swap(temp);
-  num_edges_ = temp_num_edges;
+  for (const EdgeUpdate& update : batch) {
+    const Edge e = normalize_edge(update.u, update.v);
+    if (update.kind == UpdateKind::Insert) {
+      adjacency_[e.u].insert(e.v);
+      adjacency_[e.v].insert(e.u);
+      ++num_edges_;
+    } else {
+      adjacency_[e.u].erase(e.v);
+      adjacency_[e.v].erase(e.u);
+      --num_edges_;
+    }
+  }
   return BatchApplyResult{UpdateStatus::Ok, "", batch.size()};
 }
 
