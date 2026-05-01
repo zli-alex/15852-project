@@ -111,6 +111,24 @@ if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
     COMMAND $<TARGET_FILE:test_seq_baseline>
   )
 
+  add_executable(test_seq_exact
+    test_seq_exact.cpp
+    ../src/graph_store.cpp
+    ../src/validator.cpp
+    ../src/seq_exact_engine.cpp
+  )
+
+  target_link_libraries(test_seq_exact
+    PRIVATE
+      dgcolor_project_options
+      dgcolor_parlay
+  )
+
+  add_test(
+    NAME seq_exact
+    COMMAND $<TARGET_FILE:test_seq_exact>
+  )
+
   add_executable(test_seq_baseline_fuzz
     test_seq_baseline_fuzz.cpp
     ../src/graph_store.cpp
@@ -167,5 +185,5 @@ if(NOT DGCOLOR_PARLAY_INCLUDE_DIR STREQUAL "")
     COMMAND $<TARGET_FILE:test_par_relaxed_fuzz>
   )
 else()
-  message(WARNING "Skipping Parlay-dependent tests (test_types_batch, test_interfaces_compile, test_graph_store, test_validator, test_seq_baseline, test_seq_baseline_fuzz, test_par_relaxed, test_par_relaxed_fuzz) because ParlayLib was not found.")
+  message(WARNING "Skipping Parlay-dependent tests (test_types_batch, test_interfaces_compile, test_graph_store, test_validator, test_seq_baseline, test_seq_exact, test_seq_baseline_fuzz, test_par_relaxed, test_par_relaxed_fuzz) because ParlayLib was not found.")
 endif()
