@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """Summarize repeated paper-repair benchmark CSVs with median metrics."""
 
-from __future__ import annotations
-
 import argparse
 import csv
 import statistics
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
 
 
 METRICS = [
@@ -30,7 +27,7 @@ METRICS = [
 ]
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_path", type=Path, help="Parsed benchmark CSV to summarize.")
     parser.add_argument(
@@ -42,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def to_float(value: str) -> Optional[float]:
+def to_float(value):
     if value == "":
         return None
     try:
@@ -51,9 +48,9 @@ def to_float(value: str) -> Optional[float]:
         return None
 
 
-def main() -> int:
+def main():
     args = parse_args()
-    groups: dict[tuple[str, str, str, str], list[dict[str, str]]] = defaultdict(list)
+    groups = defaultdict(list)
     with args.csv_path.open(newline="") as fh:
         for row in csv.DictReader(fh):
             if row.get("engine_name") != "par_exact":
@@ -69,8 +66,9 @@ def main() -> int:
     fieldnames = ["git_commit", "par_exact_token_repair", "batch_size", "parlay_threads", "samples"]
     fieldnames.extend(f"median_{metric}" for metric in METRICS)
 
-    rows: list[dict[str, str]] = []
-    def sort_key(item: tuple[tuple[str, str, str, str], list[dict[str, str]]]) -> tuple[str, str, int, int]:
+    rows = []
+
+    def sort_key(item):
         key = item[0]
         return (key[0], key[1], int(key[2]), int(key[3]))
 
@@ -83,7 +81,11 @@ def main() -> int:
             "samples": str(len(samples)),
         }
         for metric in METRICS:
-            values = [value for row in samples if (value := to_float(row.get(metric, ""))) is not None]
+            values = []
+            for row in samples:
+                value = to_float(row.get(metric, ""))
+                if value is not None:
+                    values.append(value)
             out[f"median_{metric}"] = f"{statistics.median(values):.9g}" if values else ""
         rows.append(out)
 

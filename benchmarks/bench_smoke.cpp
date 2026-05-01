@@ -2,9 +2,12 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cctype>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -38,6 +41,8 @@ struct BenchConfig {
   std::size_t validate_every{0};
   bool validate_final_only{false};
   bool par_exact_token_repair{false};
+  std::string initial_file{};
+  std::string updates_file{};
 };
 
 bool ParseU64(const std::string& text, std::uint64_t* out) {
@@ -78,9 +83,9 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
       cfg->workload = argv[++i];
       if (cfg->workload != "random_attempts" && cfg->workload != "valid_insertions" &&
           cfg->workload != "mixed_valid" && cfg->workload != "batch_valid" &&
-          cfg->workload != "conflict_heavy") {
+          cfg->workload != "conflict_heavy" && cfg->workload != "file_stream") {
         throw std::invalid_argument(
-            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid|batch_valid|conflict_heavy)");
+            "invalid --workload (expected random_attempts|valid_insertions|mixed_valid|batch_valid|conflict_heavy|file_stream)");
       }
     } else if (arg == "--seed" && i + 1 < argc) {
       std::uint64_t v = 0;
@@ -164,6 +169,10 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
       cfg->validate_final_only = true;
     } else if (arg == "--par-exact-token-repair") {
       cfg->par_exact_token_repair = true;
+    } else if (arg == "--initial-file" && i + 1 < argc) {
+      cfg->initial_file = argv[++i];
+    } else if (arg == "--updates-file" && i + 1 < argc) {
+      cfg->updates_file = argv[++i];
     } else {
       throw std::invalid_argument("unknown or incomplete argument: " + arg);
     }
@@ -179,6 +188,10 @@ void ParseArgs(int argc, char** argv, BenchConfig* cfg) {
   if (cfg->workload == "conflict_heavy" && cfg->engine == "graph_store_only") {
     throw std::invalid_argument(
         "conflict_heavy currently supports seq_baseline|par_relaxed|seq_exact|par_exact only");
+  }
+  if (cfg->workload == "file_stream" &&
+      (cfg->initial_file.empty() || cfg->updates_file.empty())) {
+    throw std::invalid_argument("file_stream requires --initial-file and --updates-file");
   }
 }
 
@@ -347,6 +360,200 @@ bool GenerateValidDeletion(dgcolor::Rng* rng, const std::vector<std::uint64_t>& 
   return true;
 }
 
+std::string Trim(const std::string& text) {
+  std::size_t first = 0;
+  while (first < text.size() &&
+         std::isspace(static_cast<unsigned char>(text[first])) != 0) {
+    ++first;
+  }
+  std::size_t last = text.size();
+  while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1])) != 0) {
+    --last;
+  }
+  return text.substr(first, last - first);
+}
+
+bool IsDataLine(const std::string& line) {
+  const std::string trimmed = Trim(line);
+  return !trimmed.empty() && trimmed[0] != '#' && trimmed[0] != '%';
+}
+
+dgcolor::VertexId ParseVertexToken(const std::string& token, dgcolor::VertexId vertices,
+                                   const std::string& path, std::size_t line_number) {
+  try {
+    std::size_t pos = 0;
+    const std::uint64_t value = std::stoull(token, &pos);
+    if (pos != token.size() || value > UINT32_MAX || value >= vertices) {
+      throw std::invalid_argument("bad vertex");
+    }
+    return static_cast<dgcolor::VertexId>(value);
+  } catch (...) {
+    throw std::invalid_argument("parse_error: " + path + ":" + std::to_string(line_number) +
+                                ": invalid vertex id '" + token + "'");
+  }
+}
+
+dgcolor::UpdateBatch LoadInitialFile(const std::string& path, dgcolor::VertexId vertices) {
+  std::ifstream input(path);
+  if (!input) {
+    throw std::invalid_argument("parse_error: could not open initial file: " + path);
+  }
+
+  dgcolor::UpdateBatch updates;
+  std::string line;
+  std::size_t line_number = 0;
+  while (std::getline(input, line)) {
+    ++line_number;
+    if (!IsDataLine(line)) {
+      continue;
+    }
+
+    std::istringstream stream(line);
+    std::string u_token;
+    std::string v_token;
+    std::string extra;
+    if (!(stream >> u_token >> v_token) || (stream >> extra)) {
+      throw std::invalid_argument("parse_error: " + path + ":" + std::to_string(line_number) +
+                                  ": expected 'u v'");
+    }
+
+    updates.push_back(dgcolor::EdgeUpdate{
+        dgcolor::UpdateKind::Insert, ParseVertexToken(u_token, vertices, path, line_number),
+        ParseVertexToken(v_token, vertices, path, line_number), 0});
+  }
+  return updates;
+}
+
+std::vector<dgcolor::EdgeUpdate> LoadUpdatesFile(const std::string& path,
+                                                 dgcolor::VertexId vertices) {
+  std::ifstream input(path);
+  if (!input) {
+    throw std::invalid_argument("parse_error: could not open updates file: " + path);
+  }
+
+  std::vector<dgcolor::EdgeUpdate> updates;
+  std::string line;
+  std::size_t line_number = 0;
+  while (std::getline(input, line)) {
+    ++line_number;
+    if (!IsDataLine(line)) {
+      continue;
+    }
+
+    std::istringstream stream(line);
+    std::string kind_token;
+    std::string u_token;
+    std::string v_token;
+    std::string extra;
+    if (!(stream >> kind_token >> u_token >> v_token) || (stream >> extra)) {
+      throw std::invalid_argument("parse_error: " + path + ":" + std::to_string(line_number) +
+                                  ": expected 'I u v' or 'D u v'");
+    }
+    if (kind_token != "I" && kind_token != "D") {
+      throw std::invalid_argument("parse_error: " + path + ":" + std::to_string(line_number) +
+                                  ": expected update kind 'I' or 'D'");
+    }
+
+    updates.push_back(dgcolor::EdgeUpdate{
+        kind_token == "I" ? dgcolor::UpdateKind::Insert : dgcolor::UpdateKind::Delete,
+        ParseVertexToken(u_token, vertices, path, line_number),
+        ParseVertexToken(v_token, vertices, path, line_number), updates.size()});
+  }
+  return updates;
+}
+
+bool ApplyOneUpdate(dgcolor::AdjacencyGraphStore* graph_only,
+                    dgcolor::SeqBaselineEngine* seq_engine,
+                    dgcolor::SeqExactEngine* seq_exact_engine,
+                    dgcolor::ParExactEngine* par_exact_engine,
+                    dgcolor::ParRelaxedEngine* par_relaxed_engine,
+                    const dgcolor::EdgeUpdate& update, double* engine_apply_seconds,
+                    double* graph_apply_seconds, std::size_t* vertices_touched_total,
+                    std::size_t* edges_changed) {
+  if (graph_only) {
+    const auto apply_start = std::chrono::steady_clock::now();
+    const dgcolor::UpdateResult result = graph_only->apply_update(update);
+    const double apply_seconds = SecondsSince(apply_start);
+    *graph_apply_seconds += apply_seconds;
+    *engine_apply_seconds += apply_seconds;
+    *edges_changed = (result.status == dgcolor::UpdateStatus::Ok) ? 1 : 0;
+    return result.status == dgcolor::UpdateStatus::Ok;
+  }
+  if (seq_engine) {
+    const dgcolor::UpdateStats stats = seq_engine->apply_update(update);
+    *engine_apply_seconds += stats.seconds;
+    *vertices_touched_total += stats.vertices_touched;
+    *edges_changed = stats.edges_changed;
+    return stats.applied;
+  }
+  if (seq_exact_engine) {
+    const dgcolor::UpdateStats stats = seq_exact_engine->apply_update(update);
+    *engine_apply_seconds += stats.seconds;
+    *vertices_touched_total += stats.vertices_touched;
+    *edges_changed = stats.edges_changed;
+    return stats.applied;
+  }
+  if (par_exact_engine) {
+    const dgcolor::UpdateStats stats = par_exact_engine->apply_update(update);
+    *engine_apply_seconds += stats.seconds;
+    *vertices_touched_total += stats.vertices_touched;
+    *edges_changed = stats.edges_changed;
+    return stats.applied;
+  }
+
+  const dgcolor::UpdateStats stats = par_relaxed_engine->apply_update(update);
+  *engine_apply_seconds += stats.seconds;
+  *vertices_touched_total += stats.vertices_touched;
+  *edges_changed = stats.edges_changed;
+  return stats.applied;
+}
+
+bool ApplyUpdateBatch(dgcolor::AdjacencyGraphStore* graph_only,
+                      dgcolor::SeqBaselineEngine* seq_engine,
+                      dgcolor::SeqExactEngine* seq_exact_engine,
+                      dgcolor::ParExactEngine* par_exact_engine,
+                      dgcolor::ParRelaxedEngine* par_relaxed_engine,
+                      const dgcolor::UpdateBatch& batch, double* engine_apply_seconds,
+                      double* graph_apply_seconds, std::size_t* vertices_touched_total,
+                      std::size_t* edges_changed) {
+  if (graph_only) {
+    const auto apply_start = std::chrono::steady_clock::now();
+    const dgcolor::BatchApplyResult result = graph_only->apply_batch(batch);
+    const double apply_seconds = SecondsSince(apply_start);
+    *graph_apply_seconds += apply_seconds;
+    *engine_apply_seconds += apply_seconds;
+    *edges_changed = (result.status == dgcolor::UpdateStatus::Ok) ? result.updates_applied : 0;
+    return result.status == dgcolor::UpdateStatus::Ok;
+  }
+  if (seq_engine) {
+    const dgcolor::BatchStats stats = seq_engine->apply_batch(batch);
+    *engine_apply_seconds += stats.seconds;
+    *vertices_touched_total += stats.vertices_touched;
+    *edges_changed = stats.edges_changed;
+    return stats.applied;
+  }
+  if (seq_exact_engine) {
+    const dgcolor::BatchStats stats = seq_exact_engine->apply_batch(batch);
+    *engine_apply_seconds += stats.seconds;
+    *vertices_touched_total += stats.vertices_touched;
+    *edges_changed = stats.edges_changed;
+    return stats.applied;
+  }
+  if (par_exact_engine) {
+    const dgcolor::BatchStats stats = par_exact_engine->apply_batch(batch);
+    *engine_apply_seconds += stats.seconds;
+    *vertices_touched_total += stats.vertices_touched;
+    *edges_changed = stats.edges_changed;
+    return stats.applied;
+  }
+
+  const dgcolor::BatchStats stats = par_relaxed_engine->apply_batch(batch);
+  *engine_apply_seconds += stats.seconds;
+  *vertices_touched_total += stats.vertices_touched;
+  *edges_changed = stats.edges_changed;
+  return stats.applied;
+}
+
 void RecordShadowInsertion(const dgcolor::EdgeUpdate& update,
                            std::vector<dgcolor::Degree>* degrees,
                            std::unordered_set<std::uint64_t>* edges,
@@ -393,6 +600,21 @@ int main(int argc, char** argv) {
   } catch (const std::exception& e) {
     std::cerr << "argument_error=" << e.what() << "\n";
     return 2;
+  }
+
+  dgcolor::UpdateBatch initial_file_updates;
+  std::vector<dgcolor::EdgeUpdate> file_stream_updates;
+  if (cfg.workload == "file_stream") {
+    try {
+      initial_file_updates = LoadInitialFile(cfg.initial_file, cfg.vertices);
+      file_stream_updates = LoadUpdatesFile(cfg.updates_file, cfg.vertices);
+      cfg.initial_edges_requested = initial_file_updates.size();
+      cfg.updates = file_stream_updates.size();
+      cfg.max_generation_attempts = 0;
+    } catch (const std::exception& e) {
+      std::cerr << "argument_error=" << e.what() << "\n";
+      return 2;
+    }
   }
 
   dgcolor::Rng rng(cfg.seed);
@@ -443,47 +665,124 @@ int main(int argc, char** argv) {
   std::unique_ptr<dgcolor::SeqExactEngine> seq_exact_engine;
   std::unique_ptr<dgcolor::ParRelaxedEngine> par_relaxed_engine;
   std::unique_ptr<dgcolor::ParExactEngine> par_exact_engine;
-  if (cfg.engine == "graph_store_only") {
-    graph_only = std::make_unique<dgcolor::AdjacencyGraphStore>(cfg.vertices, cfg.delta_cap);
-    initial_edges = graph_only->num_edges();
-  } else if (cfg.engine == "seq_baseline") {
-    seq_engine = std::make_unique<dgcolor::SeqBaselineEngine>(cfg.vertices, cfg.delta_cap);
-    seq_engine->initialize_coloring();
-    initial_edges = seq_engine->graph().num_edges();
-  } else if (cfg.engine == "seq_exact") {
-    seq_exact_engine = std::make_unique<dgcolor::SeqExactEngine>(cfg.vertices, cfg.delta_cap, cfg.seed);
-    seq_exact_engine->initialize_coloring();
-    initial_edges = seq_exact_engine->graph().num_edges();
-    seq_exact_palette_size_out = seq_exact_engine->palette_size();
-  } else if (cfg.engine == "par_exact") {
-    par_exact_engine =
-        std::make_unique<dgcolor::ParExactEngine>(cfg.vertices, cfg.delta_cap, cfg.seed, cfg.max_rounds);
-    par_exact_engine->initialize_coloring();
-    par_exact_engine->set_diagnostics_enabled(cfg.diagnostics);
-    par_exact_engine->set_token_repair_enabled(cfg.par_exact_token_repair);
-    if (cfg.validate_final_only) {
-      par_exact_engine->set_validate_after_apply(false);
+  try {
+    if (cfg.engine == "graph_store_only") {
+      graph_only = std::make_unique<dgcolor::AdjacencyGraphStore>(cfg.vertices, cfg.delta_cap);
+      if (!initial_file_updates.empty()) {
+        const dgcolor::BatchApplyResult init_result = graph_only->apply_batch(initial_file_updates);
+        if (init_result.status != dgcolor::UpdateStatus::Ok) {
+          throw std::invalid_argument("initial graph updates were rejected: " +
+                                      std::string(dgcolor::update_status_name(init_result.status)) +
+                                      (init_result.message.empty() ? "" : ": " + init_result.message));
+        }
+      }
+      initial_edges = graph_only->num_edges();
+    } else if (cfg.engine == "seq_baseline") {
+      if (cfg.workload == "file_stream") {
+        seq_engine =
+            std::make_unique<dgcolor::SeqBaselineEngine>(cfg.vertices, cfg.delta_cap, initial_file_updates);
+      } else {
+        seq_engine = std::make_unique<dgcolor::SeqBaselineEngine>(cfg.vertices, cfg.delta_cap);
+      }
+      seq_engine->initialize_coloring();
+      initial_edges = seq_engine->graph().num_edges();
+    } else if (cfg.engine == "seq_exact") {
+      if (cfg.workload == "file_stream") {
+        seq_exact_engine = std::make_unique<dgcolor::SeqExactEngine>(
+            cfg.vertices, cfg.delta_cap, cfg.seed, initial_file_updates);
+      } else {
+        seq_exact_engine =
+            std::make_unique<dgcolor::SeqExactEngine>(cfg.vertices, cfg.delta_cap, cfg.seed);
+      }
+      seq_exact_engine->initialize_coloring();
+      initial_edges = seq_exact_engine->graph().num_edges();
+      seq_exact_palette_size_out = seq_exact_engine->palette_size();
+    } else if (cfg.engine == "par_exact") {
+      if (cfg.workload == "file_stream") {
+        par_exact_engine = std::make_unique<dgcolor::ParExactEngine>(
+            cfg.vertices, cfg.delta_cap, cfg.seed, cfg.max_rounds, initial_file_updates);
+      } else {
+        par_exact_engine = std::make_unique<dgcolor::ParExactEngine>(
+            cfg.vertices, cfg.delta_cap, cfg.seed, cfg.max_rounds);
+      }
+      par_exact_engine->initialize_coloring();
+      par_exact_engine->set_diagnostics_enabled(cfg.diagnostics);
+      par_exact_engine->set_token_repair_enabled(cfg.par_exact_token_repair);
+      if (cfg.validate_final_only) {
+        par_exact_engine->set_validate_after_apply(false);
+      }
+      initial_edges = par_exact_engine->graph().num_edges();
+      par_exact_palette_size_out = par_exact_engine->palette_size();
+      par_exact_max_rounds_out = par_exact_engine->max_rounds();
+    } else {
+      if (cfg.workload == "file_stream") {
+        par_relaxed_engine = std::make_unique<dgcolor::ParRelaxedEngine>(
+            cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds,
+            initial_file_updates);
+      } else {
+        par_relaxed_engine = std::make_unique<dgcolor::ParRelaxedEngine>(
+            cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds);
+      }
+      par_relaxed_engine->initialize_coloring();
+      par_relaxed_engine->set_diagnostics_enabled(cfg.diagnostics);
+      if (cfg.validate_final_only) {
+        par_relaxed_engine->set_validate_after_apply(false);
+      }
+      initial_edges = par_relaxed_engine->graph().num_edges();
+      palette_multiplier_out = par_relaxed_engine->palette_multiplier();
+      palette_size_out = par_relaxed_engine->palette_size();
+      max_rounds_out = par_relaxed_engine->max_rounds();
     }
-    initial_edges = par_exact_engine->graph().num_edges();
-    par_exact_palette_size_out = par_exact_engine->palette_size();
-    par_exact_max_rounds_out = par_exact_engine->max_rounds();
-  } else {
-    par_relaxed_engine = std::make_unique<dgcolor::ParRelaxedEngine>(
-        cfg.vertices, cfg.delta_cap, cfg.seed, cfg.palette_multiplier, cfg.max_rounds);
-    par_relaxed_engine->initialize_coloring();
-    par_relaxed_engine->set_diagnostics_enabled(cfg.diagnostics);
-    if (cfg.validate_final_only) {
-      par_relaxed_engine->set_validate_after_apply(false);
-    }
-    initial_edges = par_relaxed_engine->graph().num_edges();
-    palette_multiplier_out = par_relaxed_engine->palette_multiplier();
-    palette_size_out = par_relaxed_engine->palette_size();
-    max_rounds_out = par_relaxed_engine->max_rounds();
+  } catch (const std::exception& e) {
+    std::cerr << "argument_error=" << e.what() << "\n";
+    return 2;
   }
   const double build_seconds = SecondsSince(build_start);
 
   const auto update_start = std::chrono::steady_clock::now();
-  if (cfg.workload == "valid_insertions") {
+  if (cfg.workload == "file_stream") {
+    updates_generated = file_stream_updates.size();
+    if (cfg.batch_size <= 1) {
+      for (const dgcolor::EdgeUpdate& update : file_stream_updates) {
+        std::size_t edges_changed = 0;
+        const bool update_applied = ApplyOneUpdate(
+            graph_only.get(), seq_engine.get(), seq_exact_engine.get(), par_exact_engine.get(),
+            par_relaxed_engine.get(), update, &engine_apply_seconds, &graph_apply_seconds,
+            &vertices_touched_total, &edges_changed);
+        if (update_applied) {
+          applied += edges_changed;
+        } else {
+          ++rejected;
+        }
+      }
+    } else {
+      dgcolor::UpdateBatch batch;
+      batch.reserve(cfg.batch_size);
+      for (std::size_t i = 0; i < file_stream_updates.size(); ++i) {
+        batch.push_back(file_stream_updates[i]);
+        const bool batch_full = batch.size() >= cfg.batch_size;
+        const bool last_update = (i + 1 == file_stream_updates.size());
+        if (!batch_full && !last_update) {
+          continue;
+        }
+
+        ++batches_generated;
+        std::size_t edges_changed = 0;
+        const bool batch_applied = ApplyUpdateBatch(
+            graph_only.get(), seq_engine.get(), seq_exact_engine.get(), par_exact_engine.get(),
+            par_relaxed_engine.get(), batch, &engine_apply_seconds, &graph_apply_seconds,
+            &vertices_touched_total, &edges_changed);
+        if (batch_applied) {
+          ++batches_applied;
+          applied += edges_changed;
+          rejected += (batch.size() - edges_changed);
+        } else {
+          rejected += batch.size();
+        }
+        batch.clear();
+      }
+    }
+  } else if (cfg.workload == "valid_insertions") {
     std::vector<dgcolor::Degree> shadow_degrees(cfg.vertices, 0);
     std::unordered_set<std::uint64_t> shadow_edges;
     std::vector<std::uint64_t> shadow_edge_list;
@@ -1164,6 +1463,10 @@ int main(int argc, char** argv) {
   PrintMetric("benchmark_name", "foundation_smoke");
   PrintMetric("engine_name", cfg.engine);
   PrintMetric("workload", cfg.workload);
+  if (cfg.workload == "file_stream") {
+    PrintMetric("initial_file", cfg.initial_file);
+    PrintMetric("updates_file", cfg.updates_file);
+  }
   PrintMetric("seed", cfg.seed);
   PrintMetric("num_vertices", cfg.vertices);
   PrintMetric("delta_cap", cfg.delta_cap);
