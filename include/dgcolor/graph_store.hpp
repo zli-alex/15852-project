@@ -38,6 +38,7 @@ class AdjacencyGraphStore final : public GraphStore {
   Degree degree(VertexId v) const override;
   bool has_edge(VertexId u, VertexId v) const override;
   parlay::sequence<VertexId> neighbors(VertexId v) const override;
+  const std::unordered_set<VertexId>& adjacency_set(VertexId v) const;
 
   UpdateResult can_apply(const EdgeUpdate& update) const override;
   UpdateResult apply_update(const EdgeUpdate& update) override;

@@ -185,6 +185,7 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
       colors_before[i] = colors_[active[i]];
     }
     proposal_count_ += static_cast<std::uint64_t>(active.size());
+    diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(active.size());
     diagnostics_.active_size_round_total += static_cast<std::uint64_t>(active.size());
     if (active.size() > diagnostics_.max_active_size) {
       diagnostics_.max_active_size = static_cast<std::uint64_t>(active.size());
@@ -196,6 +197,7 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
       used_sequential = true;
     }
 
+    diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(active.size()) * 2U;
     if (sequential_path) {
       for (std::size_t i = 0; i < active.size(); ++i) {
         const VertexId v = active[i];
@@ -272,9 +274,9 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
     }
 
     std::vector<VertexId> frontier = active;
+    diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(active.size());
     for (VertexId v : active) {
-      const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-      for (VertexId u : nbrs) {
+      for (VertexId u : direct_neighbors(v)) {
         frontier.push_back(u);
       }
     }
@@ -431,8 +433,7 @@ std::vector<VertexId> ParExactEngine::collect_conflicted_vertices_from_inserted_
 Color ParExactEngine::first_available_color_with_offset(VertexId v, Color offset) const {
   const std::size_t palette = palette_size();
   std::vector<unsigned char> unavailable(palette, 0);
-  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-  for (VertexId u : nbrs) {
+  for (VertexId u : direct_neighbors(v)) {
     const Color c = colors_[u];
     if (color_in_palette_range(c)) {
       unavailable[c] = 1;
@@ -454,8 +455,7 @@ bool ParExactEngine::proposal_conflicts_non_active_neighbors(
     return true;
   }
 
-  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-  for (VertexId u : nbrs) {
+  for (VertexId u : direct_neighbors(v)) {
     if (u < active_mask.size() && active_mask[u]) {
       continue;
     }
@@ -473,8 +473,7 @@ bool ParExactEngine::proposal_conflicts_active_neighbors(
     return true;
   }
 
-  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-  for (VertexId u : nbrs) {
+  for (VertexId u : direct_neighbors(v)) {
     if (u >= active_mask.size() || !active_mask[u] || u >= active_index.size()) {
       continue;
     }
@@ -493,13 +492,13 @@ std::vector<VertexId> ParExactEngine::collect_unresolved_frontier_from_candidate
     const std::vector<VertexId>& candidates) const {
   std::vector<VertexId> unresolved;
   unresolved.reserve(candidates.size());
+  diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(candidates.size());
   for (VertexId v : candidates) {
     if (v >= graph_.num_vertices()) {
       continue;
     }
-    const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
     bool conflicted = false;
-    for (VertexId u : nbrs) {
+    for (VertexId u : direct_neighbors(v)) {
       if (colors_[u] == colors_[v]) {
         conflicted = true;
         break;
@@ -516,8 +515,7 @@ Color ParExactEngine::greedy_color_for_vertex(VertexId v) const {
   const std::size_t palette = palette_size();
   std::vector<unsigned char> unavailable(palette, 0);
 
-  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-  for (VertexId u : nbrs) {
+  for (VertexId u : direct_neighbors(v)) {
     const Color neighbor_color = colors_[u];
     if (neighbor_color != kUncolored && color_in_palette_range(neighbor_color)) {
       unavailable[neighbor_color] = 1;
@@ -531,6 +529,10 @@ Color ParExactEngine::greedy_color_for_vertex(VertexId v) const {
   }
 
   throw std::runtime_error("no available color in [0, delta_cap] during par_exact greedy coloring");
+}
+
+const std::unordered_set<VertexId>& ParExactEngine::direct_neighbors(VertexId v) const {
+  return graph_.adjacency_set(v);
 }
 
 void ParExactEngine::recolor_all_greedy_exact() {

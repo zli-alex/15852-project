@@ -1244,6 +1244,8 @@ int main(int argc, char** argv) {
     PrintMetric("internal_validation_seconds", diagnostics.internal_validation_seconds);
     PrintMetric("max_active_size", diagnostics.max_active_size);
     PrintMetric("active_size_round_total", diagnostics.active_size_round_total);
+    PrintMetric("neighbor_materializations", diagnostics.neighbor_materializations);
+    PrintMetric("direct_neighbor_scans", diagnostics.direct_neighbor_scans);
   }
 
   if (!graph_validated) {

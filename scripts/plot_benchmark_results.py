@@ -67,6 +67,8 @@ NUMERIC_COLUMNS = [
     "sequential_fast_path_count",
     "max_active_size",
     "active_size_round_total",
+    "neighbor_materializations",
+    "direct_neighbor_scans",
     "parlay_threads",
 ]
 

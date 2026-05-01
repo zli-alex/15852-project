@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "dgcolor/coloring_engine.hpp"
@@ -18,6 +19,8 @@ struct ParExactDiagnostics {
   double repair_seconds{0.0};
   double active_build_seconds{0.0};
   double internal_validation_seconds{0.0};
+  std::uint64_t neighbor_materializations{0};
+  std::uint64_t direct_neighbor_scans{0};
 };
 
 class ParExactEngine final : public ColoringEngine {
@@ -78,6 +81,7 @@ class ParExactEngine final : public ColoringEngine {
   [[maybe_unused]] std::vector<VertexId> collect_unresolved_frontier_from_candidates(
       const std::vector<VertexId>& candidates) const;
   Color greedy_color_for_vertex(VertexId v) const;
+  const std::unordered_set<VertexId>& direct_neighbors(VertexId v) const;
   void recolor_all_greedy_exact();
   bool color_in_palette_range(Color c) const;
   void validate_coloring_or_throw(const char* context) const;

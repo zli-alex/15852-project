@@ -72,6 +72,14 @@ parlay::sequence<VertexId> AdjacencyGraphStore::neighbors(VertexId v) const {
   return result;
 }
 
+const std::unordered_set<VertexId>& AdjacencyGraphStore::adjacency_set(VertexId v) const {
+  static const std::unordered_set<VertexId> kEmpty;
+  if (!IsValidVertex(v, num_vertices_)) {
+    return kEmpty;
+  }
+  return adjacency_[v];
+}
+
 UpdateResult AdjacencyGraphStore::can_apply(const EdgeUpdate& update) const {
   if (!IsValidVertex(update.u, num_vertices_) || !IsValidVertex(update.v, num_vertices_)) {
     return ErrorResult(UpdateStatus::InvalidVertex, "vertex id out of range");
