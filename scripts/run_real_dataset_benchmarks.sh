@@ -10,7 +10,6 @@ timestamp="$(date +%Y%m%d_%H%M%S)"
 log_path="logs/real_datasets/real_dataset_benchmarks_${timestamp}.log"
 
 : "${DATASET_NAME:?DATASET_NAME must be set}"
-: "${DATASET_PATH:?DATASET_PATH must be set}"
 
 DELTA_CAP="${DELTA_CAP:-64}"
 INITIAL_EDGES="${INITIAL_EDGES:-0}"
@@ -23,6 +22,12 @@ ENGINES="${ENGINES:-seq_baseline seq_exact par_relaxed par_exact}"
 MODE="${MODE:-insertion_only}"
 PREPARED_OUTPUT_DIR="${PREPARED_OUTPUT_DIR:-data/prepared}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
+
+if [[ "${SKIP_PREPARE}" != "1" ]]; then
+  : "${DATASET_PATH:?DATASET_PATH must be set unless SKIP_PREPARE=1}"
+else
+  DATASET_PATH="${DATASET_PATH:-<not-used-when-skip-prepare>}"
+fi
 
 print_command() {
   printf "command="
