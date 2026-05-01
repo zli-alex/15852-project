@@ -64,9 +64,6 @@ UpdateStats SeqExactEngine::apply_update(const EdgeUpdate& update) {
   if (!initialized_) {
     throw std::logic_error("SeqExactEngine::apply_update requires initialize_coloring() first");
   }
-  if (update.kind == UpdateKind::Delete) {
-    throw std::logic_error("SeqExactEngine::apply_update delete path is not implemented in Step 2");
-  }
 
   const auto start = std::chrono::steady_clock::now();
   const UpdateResult result = graph_.apply_update(update);
@@ -74,6 +71,13 @@ UpdateStats SeqExactEngine::apply_update(const EdgeUpdate& update) {
     const auto end = std::chrono::steady_clock::now();
     const double seconds = std::chrono::duration<double>(end - start).count();
     return UpdateStats{false, 0, 0, seconds};
+  }
+
+  if (update.kind == UpdateKind::Delete) {
+    validate_coloring_or_throw("apply_update_delete");
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return UpdateStats{true, 1, 0, seconds};
   }
 
   std::size_t vertices_touched = 0;

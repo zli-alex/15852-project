@@ -135,6 +135,17 @@ void TestApplyUpdateBeforeInitializeThrows() {
   assert(threw);
 }
 
+void TestDeleteBeforeInitializeThrows() {
+  SeqExactEngine engine(4, 3, 23);
+  bool threw = false;
+  try {
+    (void)engine.apply_update(Delete(0, 1));
+  } catch (const std::logic_error&) {
+    threw = true;
+  }
+  assert(threw);
+}
+
 void TestAcceptedInsertionNoConflict() {
   UpdateBatch initial;
   initial.push_back(Insert(1, 2));  // Produces colors [0,1,0,0] on 4 vertices.
@@ -255,6 +266,59 @@ void TestRejectedDegreeCapInsertionStable() {
   assert(engine.level_conflict_choices() == level_choices_before);
 }
 
+void TestAcceptedDeletionPreservesColorsAndStats() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(1, 2));
+  initial.push_back(Insert(2, 3));
+  SeqExactEngine engine(4, 3, 47, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  const UpdateStats stats = engine.apply_update(Delete(1, 2));
+  AssertAcceptedStats(stats);
+  assert(stats.vertices_touched == 0);
+  assert(engine.graph().num_edges() + 1 == edges_before);
+  AssertColoringValid(engine);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
+void TestRejectedMissingDeletionStable() {
+  UpdateBatch initial;
+  initial.push_back(Insert(0, 1));
+  initial.push_back(Insert(1, 2));
+  SeqExactEngine engine(4, 3, 53, initial);
+  engine.initialize_coloring();
+  const auto colors_before = engine.colors();
+  const std::size_t edges_before = engine.graph().num_edges();
+  const std::uint64_t recolor_calls_before = engine.recolor_calls();
+  const std::uint64_t recolored_vertices_before = engine.recolored_vertices_total();
+  const std::uint64_t cascade_steps_before = engine.cascade_steps_total();
+  const std::uint64_t fallback_before = engine.full_fallback_count();
+  const std::uint64_t level_choices_before = engine.level_conflict_choices();
+
+  const UpdateStats stats = engine.apply_update(Delete(0, 3));
+  AssertRejectedStats(stats);
+  assert(engine.graph().num_edges() == edges_before);
+  assert(engine.colors() == colors_before);
+  assert(engine.recolor_calls() == recolor_calls_before);
+  assert(engine.recolored_vertices_total() == recolored_vertices_before);
+  assert(engine.cascade_steps_total() == cascade_steps_before);
+  assert(engine.full_fallback_count() == fallback_before);
+  assert(engine.level_conflict_choices() == level_choices_before);
+}
+
 void TestDeterministicSameSeedInsertionSequence() {
   UpdateBatch edges;
   edges.push_back(Insert(0, 1));
@@ -331,11 +395,14 @@ int main() {
   TestInitializeStarGraph();
   TestInitializeNearDeltaCapGraph();
   TestApplyUpdateBeforeInitializeThrows();
+  TestDeleteBeforeInitializeThrows();
   TestAcceptedInsertionNoConflict();
   TestAcceptedInsertionWithConflictRepairs();
   TestRejectedLoopInsertionStable();
   TestRejectedDuplicateInsertionStable();
   TestRejectedDegreeCapInsertionStable();
+  TestAcceptedDeletionPreservesColorsAndStats();
+  TestRejectedMissingDeletionStable();
   TestDeterministicSameSeedInsertionSequence();
   TestInvalidInitialBatchThrows();
   TestApplyBatchStubThrows();
