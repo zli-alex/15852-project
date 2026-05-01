@@ -35,6 +35,8 @@ class SeqExactEngine final : public ColoringEngine {
  private:
   static std::uint64_t mix_u64(std::uint64_t x);
   Level deterministic_level_for_vertex(VertexId v) const;
+  VertexId choose_insertion_recolor_endpoint(VertexId u, VertexId v);
+  bool local_repair_from_vertex(VertexId start, std::size_t* vertices_touched);
   Color greedy_color_for_vertex(VertexId v) const;
   void recolor_all_greedy_exact();
   bool color_in_palette_range(Color c) const;

@@ -1,5 +1,7 @@
 #include "dgcolor/seq_exact_engine.hpp"
 
+#include <chrono>
+#include <deque>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -58,12 +60,43 @@ void SeqExactEngine::initialize_coloring() {
   validate_coloring_or_throw("initialize_coloring");
 }
 
-UpdateStats SeqExactEngine::apply_update(const EdgeUpdate&) {
-  throw std::logic_error("SeqExactEngine::apply_update is not implemented in Step 1");
+UpdateStats SeqExactEngine::apply_update(const EdgeUpdate& update) {
+  if (!initialized_) {
+    throw std::logic_error("SeqExactEngine::apply_update requires initialize_coloring() first");
+  }
+  if (update.kind == UpdateKind::Delete) {
+    throw std::logic_error("SeqExactEngine::apply_update delete path is not implemented in Step 2");
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  const UpdateResult result = graph_.apply_update(update);
+  if (result.status != UpdateStatus::Ok) {
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+    return UpdateStats{false, 0, 0, seconds};
+  }
+
+  std::size_t vertices_touched = 0;
+  if (colors_[update.u] == colors_[update.v]) {
+    const VertexId chosen = choose_insertion_recolor_endpoint(update.u, update.v);
+    ++recolor_calls_;
+
+    const bool repaired = local_repair_from_vertex(chosen, &vertices_touched);
+    if (!repaired) {
+      ++full_fallback_count_;
+      recolor_all_greedy_exact();
+      vertices_touched += static_cast<std::size_t>(graph_.num_vertices());
+    }
+  }
+
+  validate_coloring_or_throw("apply_update");
+  const auto end = std::chrono::steady_clock::now();
+  const double seconds = std::chrono::duration<double>(end - start).count();
+  return UpdateStats{true, 1, vertices_touched, seconds};
 }
 
 BatchStats SeqExactEngine::apply_batch(const UpdateBatch&) {
-  throw std::logic_error("SeqExactEngine::apply_batch is not implemented in Step 1");
+  throw std::logic_error("SeqExactEngine::apply_batch is not implemented in Step 2");
 }
 
 std::size_t SeqExactEngine::palette_size() const {
@@ -104,6 +137,71 @@ Level SeqExactEngine::deterministic_level_for_vertex(VertexId v) const {
       mix_u64(seed_ ^ (static_cast<std::uint64_t>(v) + 0x9e3779b97f4a7c15ULL));
   const std::uint64_t modulo = static_cast<std::uint64_t>(graph_.delta_cap()) + 1ULL;
   return static_cast<Level>(mixed % modulo);
+}
+
+VertexId SeqExactEngine::choose_insertion_recolor_endpoint(VertexId u, VertexId v) {
+  const Level lu = levels_[u];
+  const Level lv = levels_[v];
+  if (lu != lv) {
+    ++level_conflict_choices_;
+    return (lu > lv) ? u : v;
+  }
+
+  const Timestamp tu = timestamps_[u];
+  const Timestamp tv = timestamps_[v];
+  if (tu != tv) {
+    return (tu > tv) ? u : v;
+  }
+
+  return (u > v) ? u : v;
+}
+
+bool SeqExactEngine::local_repair_from_vertex(VertexId start, std::size_t* vertices_touched) {
+  const std::size_t cap = static_cast<std::size_t>(graph_.num_vertices()) * 4U + 1U;
+  std::size_t steps = 0;
+  std::deque<VertexId> worklist;
+  worklist.push_back(start);
+
+  while (!worklist.empty()) {
+    if (steps >= cap) {
+      return false;
+    }
+    const VertexId v = worklist.front();
+    worklist.pop_front();
+    ++steps;
+    ++cascade_steps_total_;
+    if (vertices_touched != nullptr) {
+      ++(*vertices_touched);
+    }
+
+    std::vector<unsigned char> unavailable(palette_size(), 0);
+    const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
+    for (VertexId u : nbrs) {
+      const Color c = colors_[u];
+      if (color_in_palette_range(c)) {
+        unavailable[c] = 1;
+      }
+    }
+
+    bool changed = false;
+    for (Color c = 0; c <= graph_.delta_cap(); ++c) {
+      if (!unavailable[c]) {
+        if (colors_[v] != c) {
+          colors_[v] = c;
+          ++logical_time_;
+          timestamps_[v] = logical_time_;
+          ++recolored_vertices_total_;
+        }
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 Color SeqExactEngine::greedy_color_for_vertex(VertexId v) const {
