@@ -1,0 +1,23 @@
+{
+  "batch_size": 64,
+  "dataset_name": "ca-HepTh",
+  "delta_cap": 64,
+  "initial_edges_written": 20000,
+  "largest_component_requested": false,
+  "max_degree_observed": 64,
+  "max_raw_edges": null,
+  "mode": "insertion_only",
+  "original_raw_edges_seen": 51971,
+  "prepared_dir": "data/prepared/ca-HepTh/seed_2",
+  "remapped_num_vertices": 9875,
+  "seed": 2,
+  "shuffle": true,
+  "skipped_degree_cap": 1,
+  "skipped_duplicates": 25973,
+  "skipped_malformed": 0,
+  "skipped_self_loops": 25,
+  "source_path": "data/raw/ca-HepTh.txt.gz",
+  "undirected": true,
+  "unique_edges_after_filtering": 25973,
+  "updates_written": 5972
+}

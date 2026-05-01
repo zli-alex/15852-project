@@ -1,0 +1,23 @@
+{
+  "batch_size": 64,
+  "dataset_name": "email-Enron",
+  "delta_cap": 64,
+  "initial_edges_written": 20000,
+  "largest_component_requested": false,
+  "max_degree_observed": 64,
+  "max_raw_edges": null,
+  "mode": "insertion_only",
+  "original_raw_edges_seen": 367662,
+  "prepared_dir": "data/prepared/email-Enron/seed_3",
+  "remapped_num_vertices": 29789,
+  "seed": 3,
+  "shuffle": true,
+  "skipped_degree_cap": 73048,
+  "skipped_duplicates": 183831,
+  "skipped_malformed": 0,
+  "skipped_self_loops": 0,
+  "source_path": "data/raw/email-Enron.txt.gz",
+  "undirected": true,
+  "unique_edges_after_filtering": 183831,
+  "updates_written": 90783
+}

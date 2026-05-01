@@ -1,0 +1,23 @@
+{
+  "batch_size": 64,
+  "dataset_name": "ca-CondMat",
+  "delta_cap": 64,
+  "initial_edges_written": 20000,
+  "largest_component_requested": false,
+  "max_degree_observed": 64,
+  "max_raw_edges": null,
+  "mode": "insertion_only",
+  "original_raw_edges_seen": 186936,
+  "prepared_dir": "data/prepared/ca-CondMat/seed_3",
+  "remapped_num_vertices": 23127,
+  "seed": 3,
+  "shuffle": true,
+  "skipped_degree_cap": 3338,
+  "skipped_duplicates": 93439,
+  "skipped_malformed": 0,
+  "skipped_self_loops": 58,
+  "source_path": "data/raw/ca-CondMat.txt.gz",
+  "undirected": true,
+  "unique_edges_after_filtering": 93439,
+  "updates_written": 70101
+}

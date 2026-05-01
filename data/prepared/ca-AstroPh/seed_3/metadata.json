@@ -1,0 +1,23 @@
+{
+  "batch_size": 64,
+  "dataset_name": "ca-AstroPh",
+  "delta_cap": 64,
+  "initial_edges_written": 20000,
+  "largest_component_requested": false,
+  "max_degree_observed": 64,
+  "max_raw_edges": null,
+  "mode": "insertion_only",
+  "original_raw_edges_seen": 396160,
+  "prepared_dir": "data/prepared/ca-AstroPh/seed_3",
+  "remapped_num_vertices": 18072,
+  "seed": 3,
+  "shuffle": true,
+  "skipped_degree_cap": 40904,
+  "skipped_duplicates": 198050,
+  "skipped_malformed": 0,
+  "skipped_self_loops": 60,
+  "source_path": "data/raw/ca-AstroPh.txt.gz",
+  "undirected": true,
+  "unique_edges_after_filtering": 198050,
+  "updates_written": 100000
+}
