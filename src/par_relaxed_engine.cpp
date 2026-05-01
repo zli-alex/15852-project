@@ -1,11 +1,14 @@
 #include "dgcolor/par_relaxed_engine.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 
 #include <parlay/parallel.h>
+#include <parlay/primitives.h>
+#include <parlay/sequence.h>
 
 #include "dgcolor/validator.hpp"
 
@@ -41,7 +44,9 @@ ParRelaxedEngine::ParRelaxedEngine(VertexId num_vertices, Degree delta_cap, std:
       seed_(seed),
       palette_multiplier_(palette_multiplier),
       palette_size_(compute_palette_size(delta_cap, palette_multiplier)),
-      max_rounds_(max_rounds) {
+      max_rounds_(max_rounds),
+      active_stamp_(num_vertices, 0),
+      active_index_(num_vertices, -1) {
   if (max_rounds_ == 0) {
     throw std::invalid_argument("ParRelaxedEngine requires max_rounds >= 1");
   }
@@ -109,7 +114,7 @@ UpdateStats ParRelaxedEngine::apply_update(const EdgeUpdate& update) {
       if (diagnostics_enabled_) {
         active_build_start = std::chrono::steady_clock::now();
       }
-      std::vector<VertexId> active = {update.u, update.v};
+      parlay::sequence<VertexId> active = {update.u, update.v};
       if (diagnostics_enabled_) {
         diagnostics_.active_vertices_initial_total += static_cast<std::uint64_t>(active.size());
       }
@@ -162,7 +167,7 @@ BatchStats ParRelaxedEngine::apply_batch(const UpdateBatch& batch) {
     return BatchStats{false, batch.size(), 0, 0, seconds};
   }
 
-  std::vector<VertexId> active;
+  parlay::sequence<VertexId> active;
   std::chrono::steady_clock::time_point active_build_start;
   if (diagnostics_enabled_) {
     active_build_start = std::chrono::steady_clock::now();
@@ -254,27 +259,35 @@ ParRelaxedDiagnostics ParRelaxedEngine::diagnostics() const {
 }
 
 Color ParRelaxedEngine::greedy_color_for_vertex(VertexId v) const {
-  const std::size_t palette_size = static_cast<std::size_t>(palette_size_);
-  std::vector<bool> unavailable(palette_size, false);
-
-  const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
   if (diagnostics_enabled_) {
     ++diagnostics_.neighbor_scans;
   }
-  for (VertexId u : nbrs) {
-    const Color neighbor_color = colors_[u];
-    if (neighbor_color != kUncolored && neighbor_color < palette_size_) {
-      unavailable[neighbor_color] = true;
+  thread_local std::vector<unsigned char> tl_unavail;
+  thread_local std::vector<Color> tl_touched;
+  if (tl_unavail.size() < palette_size_) tl_unavail.assign(palette_size_, 0);
+  tl_touched.clear();
+
+  for (VertexId u : graph_.adjacency_set(v)) {
+    const Color c = colors_[u];
+    if (c != kUncolored && c < palette_size_ && !tl_unavail[c]) {
+      tl_unavail[c] = 1;
+      tl_touched.push_back(c);
     }
   }
 
+  Color result = kUncolored;
   for (Color c = 0; c < palette_size_; ++c) {
-    if (!unavailable[c]) {
-      return c;
+    if (!tl_unavail[c]) {
+      result = c;
+      break;
     }
   }
+  for (Color c : tl_touched) tl_unavail[c] = 0;
 
-  throw std::runtime_error("no available color in relaxed palette during initialization");
+  if (result == kUncolored) {
+    throw std::runtime_error("no available color in relaxed palette during initialization");
+  }
+  return result;
 }
 
 void ParRelaxedEngine::recolor_all_greedy_relaxed() {
@@ -309,62 +322,94 @@ Color ParRelaxedEngine::deterministic_color_offset(std::uint64_t round_index, Ve
                             static_cast<std::uint64_t>(palette_size_));
 }
 
-std::vector<VertexId> ParRelaxedEngine::expand_with_neighbors(const std::vector<VertexId>& seeds) const {
+parlay::sequence<VertexId> ParRelaxedEngine::expand_with_neighbors(
+    const parlay::sequence<VertexId>& seeds) const {
+  if (seeds.empty()) return {};
   const VertexId n = graph_.num_vertices();
-  std::vector<unsigned char> mark(n, 0);
-  for (VertexId v : seeds) {
-    if (v >= n) {
-      continue;
-    }
-    mark[v] = 1;
-    const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-    if (diagnostics_enabled_) {
-      ++diagnostics_.neighbor_scans;
-    }
-    for (VertexId u : nbrs) {
-      mark[u] = 1;
-    }
+
+  // Build each seed's 1-hop neighbourhood (including the seed itself) in
+  // parallel, then flatten, integer-sort and deduplicate.
+  if (diagnostics_enabled_) {
+    diagnostics_.neighbor_scans += static_cast<std::uint64_t>(seeds.size());
   }
-  std::vector<VertexId> out;
-  out.reserve(seeds.size() * 2 + 1);
-  for (VertexId v = 0; v < n; ++v) {
-    if (mark[v]) {
-      out.push_back(v);
-    }
-  }
-  return out;
+  auto per_seed = parlay::tabulate(seeds.size(), [&](std::size_t i) {
+    const VertexId v = seeds[i];
+    if (v >= n) return parlay::sequence<VertexId>{};
+    const auto& adj = graph_.adjacency_set(v);
+    parlay::sequence<VertexId> result;
+    result.reserve(adj.size() + 1);
+    result.push_back(v);
+    for (VertexId u : adj) result.push_back(u);
+    return result;
+  });
+
+  auto flat = parlay::flatten(std::move(per_seed));
+  // integer_sort is O(n) for uint32_t keys and runs in parallel.
+  auto sorted = parlay::integer_sort(flat);
+  return parlay::unique(sorted);
 }
 
-std::vector<VertexId> ParRelaxedEngine::collect_conflicted_vertices_from_candidates(
-    const std::vector<VertexId>& candidates) const {
+parlay::sequence<VertexId> ParRelaxedEngine::collect_conflicted_vertices_from_candidates(
+    const parlay::sequence<VertexId>& candidates) const {
   const VertexId n = graph_.num_vertices();
-  std::vector<unsigned char> visited(n, 0);
-  std::vector<VertexId> conflicted;
-  conflicted.reserve(candidates.size());
-  for (VertexId v : candidates) {
-    if (v >= n || visited[v]) {
-      continue;
-    }
-    visited[v] = 1;
-    const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-    if (diagnostics_enabled_) {
-      ++diagnostics_.neighbor_scans;
-    }
-    bool conflict = false;
-    for (VertexId u : nbrs) {
-      if (colors_[u] == colors_[v]) {
-        conflict = true;
-        break;
-      }
-    }
-    if (conflict) {
-      conflicted.push_back(v);
-    }
+  if (diagnostics_enabled_) {
+    diagnostics_.neighbor_scans += static_cast<std::uint64_t>(candidates.size());
   }
-  return conflicted;
+  // parlay::filter runs the predicate in parallel.
+  return parlay::filter(candidates, [&](VertexId v) -> bool {
+    if (v >= n) return false;
+    const Color cv = colors_[v];
+    for (VertexId u : graph_.adjacency_set(v)) {
+      if (colors_[u] == cv) return true;
+    }
+    return false;
+  });
 }
 
-bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& initial_active,
+void ParRelaxedEngine::prepare_active_membership(const parlay::sequence<VertexId>& active) {
+  active_membership_sparse_current_ = active.size() <= kSparseMembershipThreshold;
+  if (active_membership_sparse_current_) {
+    // Keep a sorted copy for binary-search lookup.
+    active_lookup_.assign(active.begin(), active.end());
+    // active is already sorted (output of integer_sort + unique).
+    return;
+  }
+  active_lookup_.clear();
+
+  // Dense stamp-array mode: increment the generation counter and tag each
+  // active vertex.  If the counter wraps, clear the whole array first.
+  ++current_active_stamp_;
+  if (current_active_stamp_ == 0) {
+    std::fill(active_stamp_.begin(), active_stamp_.end(), 0);
+    current_active_stamp_ = 1;
+  }
+  for (std::size_t i = 0; i < active.size(); ++i) {
+    const VertexId v = active[i];
+    if (v < active_stamp_.size()) {
+      active_stamp_[v] = current_active_stamp_;
+      active_index_[v] = static_cast<int>(i);
+    }
+  }
+}
+
+bool ParRelaxedEngine::is_active_vertex(VertexId v) const {
+  if (active_membership_sparse_current_) {
+    return std::binary_search(active_lookup_.begin(), active_lookup_.end(), v);
+  }
+  return v < active_stamp_.size() && active_stamp_[v] == current_active_stamp_;
+}
+
+int ParRelaxedEngine::active_vertex_index(VertexId v) const {
+  if (active_membership_sparse_current_) {
+    const auto it = std::lower_bound(active_lookup_.begin(), active_lookup_.end(), v);
+    if (it == active_lookup_.end() || *it != v) return -1;
+    return static_cast<int>(it - active_lookup_.begin());
+  }
+  if (v >= active_stamp_.size() || active_stamp_[v] != current_active_stamp_) return -1;
+  return active_index_[v];
+}
+
+bool ParRelaxedEngine::attempt_parallel_repair(const parlay::sequence<VertexId>& initial_active,
                                                std::size_t* vertices_touched,
                                                std::uint64_t* rounds_attempted) {
   const bool diagnostics_enabled = diagnostics_enabled_;
@@ -380,7 +425,9 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
   if (diagnostics_enabled) {
     active_build_start = std::chrono::steady_clock::now();
   }
-  std::vector<VertexId> active = collect_conflicted_vertices_from_candidates(initial_active);
+  // initial_active is already sorted & deduped (output of expand_with_neighbors).
+  parlay::sequence<VertexId> active =
+      collect_conflicted_vertices_from_candidates(initial_active);
   if (diagnostics_enabled) {
     diagnostics_.conflicted_vertices_initial_total += static_cast<std::uint64_t>(active.size());
     diagnostics_.active_build_seconds +=
@@ -410,14 +457,12 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
       diagnostics_.max_active_size = static_cast<std::uint64_t>(active.size());
     }
 
-    const VertexId n = graph_.num_vertices();
-    std::vector<int> active_index(n, -1);
-    for (std::size_t i = 0; i < active.size(); ++i) {
-      active_index[active[i]] = static_cast<int>(i);
-    }
+    // Build the active-index map once per round using the stamp-based scheme
+    // (avoids an O(n) vector alloc + fill on every round).
+    prepare_active_membership(active);
 
-    std::vector<Color> proposed(active.size(), kUncolored);
-    std::vector<unsigned char> safe(active.size(), 0);
+    parlay::sequence<Color> proposed(active.size(), kUncolored);
+    parlay::sequence<unsigned char> safe(active.size(), 0);
     std::vector<std::uint64_t> proposal_neighbor_scans(
         diagnostics_enabled ? active.size() : 0, 0);
     std::vector<std::uint64_t> safety_neighbor_scans(
@@ -433,27 +478,34 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
       }
       used_sequential_repair = true;
 
+      // Thread-local scratch avoids a heap allocation per vertex and converts
+      // the O(deg × palette) nested loop to O(deg + palette).
+      thread_local std::vector<unsigned char> tl_unavail;
+      thread_local std::vector<Color> tl_touched;
       for (std::size_t i = 0; i < active.size(); ++i) {
         const VertexId v = active[i];
         const Color offset = deterministic_color_offset(round, v);
+        const auto& adj = graph_.adjacency_set(v);
+        if (diagnostics_enabled) {
+          ++proposal_neighbor_scans[i];
+        }
+        if (tl_unavail.size() < palette_size_) tl_unavail.assign(palette_size_, 0);
+        tl_touched.clear();
+        for (VertexId u : adj) {
+          const Color c = colors_[u];
+          if (color_in_palette_range(c) && !tl_unavail[c]) {
+            tl_unavail[c] = 1;
+            tl_touched.push_back(c);
+          }
+        }
         for (Color attempt = 0; attempt < palette_size_; ++attempt) {
           const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
-          bool available = true;
-          const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-          if (diagnostics_enabled) {
-            ++proposal_neighbor_scans[i];
-          }
-          for (VertexId u : nbrs) {
-            if (colors_[u] == candidate) {
-              available = false;
-              break;
-            }
-          }
-          if (available) {
+          if (!tl_unavail[candidate]) {
             proposed[i] = candidate;
             break;
           }
         }
+        for (Color c : tl_touched) tl_unavail[c] = 0;
       }
 
       for (std::size_t i = 0; i < active.size(); ++i) {
@@ -464,20 +516,18 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
         }
 
         bool ok = true;
-        const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
         if (diagnostics_enabled) {
           ++safety_neighbor_scans[i];
         }
-        for (VertexId u : nbrs) {
+        for (VertexId u : graph_.adjacency_set(v)) {
           if (colors_[u] == candidate) {
             ok = false;
             break;
           }
-
-          const int j = active_index[u];
+          const int j = active_vertex_index(u);
           if (j >= 0 && proposed[static_cast<std::size_t>(j)] == candidate && u < v) {
-            // Conservative deterministic tie-break: for adjacent active vertices
-            // proposing the same color, only the lower vertex id may commit.
+            // Tie-break: adjacent active vertices proposing the same color —
+            // only the lower-id vertex may commit this round.
             ok = false;
             break;
           }
@@ -488,24 +538,30 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
       parlay::parallel_for(0, active.size(), [&](std::size_t i) {
         const VertexId v = active[i];
         const Color offset = deterministic_color_offset(round, v);
-        for (Color attempt = 0; attempt < palette_size_; ++attempt) {
-          const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
-          bool available = true;
-          const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
-          if (diagnostics_enabled) {
-            ++proposal_neighbor_scans[i];
-          }
-          for (VertexId u : nbrs) {
-            if (colors_[u] == candidate) {
-              available = false;
-              break;
-            }
-          }
-          if (available) {
-            proposed[i] = candidate;
-            return;
+        const auto& adj = graph_.adjacency_set(v);
+        if (diagnostics_enabled) {
+          ++proposal_neighbor_scans[i];
+        }
+        // Per-thread scratch: O(deg + palette) instead of O(deg × palette).
+        thread_local std::vector<unsigned char> tl_unavail;
+        thread_local std::vector<Color> tl_touched;
+        if (tl_unavail.size() < palette_size_) tl_unavail.assign(palette_size_, 0);
+        tl_touched.clear();
+        for (VertexId u : adj) {
+          const Color c = colors_[u];
+          if (color_in_palette_range(c) && !tl_unavail[c]) {
+            tl_unavail[c] = 1;
+            tl_touched.push_back(c);
           }
         }
+        for (Color attempt = 0; attempt < palette_size_; ++attempt) {
+          const Color candidate = static_cast<Color>((offset + attempt) % palette_size_);
+          if (!tl_unavail[candidate]) {
+            proposed[i] = candidate;
+            break;
+          }
+        }
+        for (Color c : tl_touched) tl_unavail[c] = 0;
       });
 
       parlay::parallel_for(0, active.size(), [&](std::size_t i) {
@@ -516,20 +572,16 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
         }
 
         bool ok = true;
-        const parlay::sequence<VertexId> nbrs = graph_.neighbors(v);
         if (diagnostics_enabled) {
           ++safety_neighbor_scans[i];
         }
-        for (VertexId u : nbrs) {
+        for (VertexId u : graph_.adjacency_set(v)) {
           if (colors_[u] == candidate) {
             ok = false;
             break;
           }
-
-          const int j = active_index[u];
+          const int j = active_vertex_index(u);
           if (j >= 0 && proposed[static_cast<std::size_t>(j)] == candidate && u < v) {
-            // Conservative deterministic tie-break: for adjacent active vertices
-            // proposing the same color, only the lower vertex id may commit.
             ok = false;
             break;
           }
@@ -566,7 +618,7 @@ bool ParRelaxedEngine::attempt_parallel_repair(const std::vector<VertexId>& init
       });
     }
 
-    const std::vector<VertexId> expanded = expand_with_neighbors(active);
+    const parlay::sequence<VertexId> expanded = expand_with_neighbors(active);
     active = collect_conflicted_vertices_from_candidates(expanded);
   }
 

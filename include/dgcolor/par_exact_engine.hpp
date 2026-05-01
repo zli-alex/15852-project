@@ -112,6 +112,13 @@ class ParExactEngine final : public ColoringEngine {
   bool color_in_palette_range(Color c) const;
   void validate_coloring_or_throw(const char* context) const;
 
+  // Initialise / rebuild all leu_ entries from scratch (called at initialize_coloring()).
+  void rebuild_leu_all();
+  // Update leu_ for an inserted or deleted edge.
+  void update_leu_for_edge(VertexId u, VertexId v, bool inserted);
+  // Update leu_ of all equal/higher-level neighbours when v's color changes.
+  void update_leu_for_color_change(VertexId v, Color old_color, Color new_color);
+
   AdjacencyGraphStore graph_;
   parlay::sequence<Color> colors_;
   parlay::sequence<Level> levels_;
@@ -123,6 +130,14 @@ class ParExactEngine final : public ColoringEngine {
   bool validate_after_apply_{true};
   bool diagnostics_enabled_{false};
   bool token_repair_enabled_{false};
+
+  // LowerEqualUsed data structure (paper Section 3.1).
+  // leu_[v][c] = number of *non-active* lower-or-equal-level neighbours of v
+  //              that currently hold color c.
+  // leu_bit_[v][c] = 1 iff leu_[v][c] > 0 (fast O(1) availability check).
+  // Both arrays have logical size palette_size() per vertex.
+  parlay::sequence<std::vector<std::uint16_t>> leu_;      // count
+  parlay::sequence<std::vector<unsigned char>> leu_bit_;  // bitvector
   std::uint64_t current_active_stamp_{1};
   bool active_membership_sparse_current_{false};
   std::vector<VertexId> active_lookup_;

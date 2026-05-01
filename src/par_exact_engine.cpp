@@ -8,6 +8,8 @@
 #include <vector>
 
 #include <parlay/parallel.h>
+#include <parlay/primitives.h>
+#include <parlay/sequence.h>
 
 #include "dgcolor/validator.hpp"
 
@@ -92,6 +94,7 @@ void ParExactEngine::initialize_coloring() {
     timestamps_[v] = 0;
   }
   recolor_all_greedy_exact();
+  rebuild_leu_all();
   initialized_ = true;
   validate_coloring_or_throw("initialize_coloring");
 }
@@ -125,6 +128,15 @@ BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
     const auto end = std::chrono::steady_clock::now();
     const double seconds = std::chrono::duration<double>(end - start).count();
     return BatchStats{false, batch.size(), 0, 0, seconds};
+  }
+
+  // Reflect structural changes in the LowerEqualUsed bitvectors.
+  if (!leu_.empty()) {
+    for (const EdgeUpdate& upd : batch) {
+      if (upd.u < graph_.num_vertices() && upd.v < graph_.num_vertices()) {
+        update_leu_for_edge(upd.u, upd.v, upd.kind == UpdateKind::Insert);
+      }
+    }
   }
 
   bool has_insert = false;
@@ -178,12 +190,22 @@ BatchStats ParExactEngine::apply_batch_impl(const UpdateBatch& batch) {
 bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_active,
                                            std::size_t* vertices_touched,
                                            std::uint64_t* rounds_attempted) {
-  static constexpr std::size_t kSequentialThreshold = 128;
+  static constexpr std::size_t kSequentialThreshold = 512;
   std::vector<VertexId> active = deduplicate_and_sort_vertices(initial_active);
   if (active.empty()) {
     return true;
   }
   ++diagnostics_.repair_calls;
+
+  // Mark all initial_active vertices as "logically uncolored" in leu_ so that
+  // the proposal step can use leu_bit_[v] for O(palette) instead of O(deg+palette).
+  const bool use_leu = !leu_.empty();
+  if (use_leu) {
+    for (VertexId v : active) {
+      const Color old_c = colors_[v];
+      if (old_c != kUncolored) update_leu_for_color_change(v, old_c, kUncolored);
+    }
+  }
 
   bool used_sequential = false;
   for (std::uint32_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
@@ -291,8 +313,30 @@ bool ParExactEngine::attempt_recolor_batch(const std::vector<VertexId>& initial_
       }
     }
 
+    // Re-add committed vertices' new colors to neighbors' leu_.
+    // Must be sequential to avoid races on leu_cnt_ (proposal phase is done,
+    // so reads of leu_bit_ in the NEXT round's proposal are safe).
+    if (use_leu) {
+      for (std::size_t i = 0; i < active.size(); ++i) {
+        if (!safe[i]) continue;
+        const Color new_c = proposed[i];
+        if (new_c != kUncolored) {
+          update_leu_for_color_change(active[i], kUncolored, new_c);
+        }
+      }
+    }
+
     active = collect_unresolved_frontier_from_candidates(active);
     unresolved_count_ += static_cast<std::uint64_t>(active.size());
+  }
+
+  // If any vertices failed to resolve within max_rounds_, restore their
+  // colors in leu_ so the structure stays consistent for future batches.
+  if (use_leu) {
+    for (VertexId v : active) {
+      const Color c = colors_[v];
+      if (c != kUncolored) update_leu_for_color_change(v, kUncolored, c);
+    }
   }
 
   return active.empty();
@@ -433,10 +477,12 @@ VertexId ParExactEngine::choose_conflict_endpoint(VertexId u, VertexId v) const 
 
 std::vector<VertexId> ParExactEngine::deduplicate_and_sort_vertices(
     const std::vector<VertexId>& vertices) {
-  std::vector<VertexId> out = vertices;
-  std::sort(out.begin(), out.end());
-  out.erase(std::unique(out.begin(), out.end()), out.end());
-  return out;
+  if (vertices.empty()) return {};
+  // parlay::integer_sort runs in parallel and is O(n) for integer keys.
+  parlay::sequence<VertexId> seq(vertices.begin(), vertices.end());
+  parlay::integer_sort_inplace(seq);
+  auto end_it = std::unique(seq.begin(), seq.end());
+  return std::vector<VertexId>(seq.begin(), end_it);
 }
 
 void ParExactEngine::prepare_active_membership(const std::vector<VertexId>& active) {
@@ -536,43 +582,74 @@ std::vector<VertexId> ParExactEngine::collect_conflicted_vertices_from_inserted_
 
 Color ParExactEngine::first_available_color_with_offset(VertexId v, Color offset) const {
   const std::size_t palette = palette_size();
-  std::vector<unsigned char> unavailable(palette, 0);
+  // Thread-local scratch avoids a heap allocation per call inside parallel_for.
+  // We grow the buffer lazily and clear only the entries we touch (O(deg) reset).
+  thread_local std::vector<unsigned char> unavail;
+  thread_local std::vector<Color> touched;
+  if (unavail.size() < palette) unavail.assign(palette, 0);
+  touched.clear();
+
   for (VertexId u : direct_neighbors(v)) {
     const Color c = colors_[u];
-    if (color_in_palette_range(c)) {
-      unavailable[c] = 1;
+    if (color_in_palette_range(c) && !unavail[c]) {
+      unavail[c] = 1;
+      touched.push_back(c);
     }
   }
 
+  Color result = kUncolored;
   for (std::size_t i = 0; i < palette; ++i) {
     const Color candidate = static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
-    if (!unavailable[candidate]) {
-      return candidate;
+    if (!unavail[candidate]) {
+      result = candidate;
+      break;
     }
   }
-  return kUncolored;
+  for (Color c : touched) unavail[c] = 0;
+  return result;
 }
 
 Color ParExactEngine::first_level_available_color_with_offset(VertexId v, Color offset) const {
   const std::size_t palette = palette_size();
-  std::vector<unsigned char> unavailable(palette, 0);
-  for (VertexId u : direct_neighbors(v)) {
-    if (is_active_vertex(u) || levels_[u] > levels_[v]) {
-      continue;
+
+  // Fast path: use the pre-maintained LowerEqualUsed bitvector when available.
+  // leu_bit_[v] only contains colors from *non-active* lower/equal-level neighbours;
+  // active vertices were removed from leu_ when they joined the active set.
+  if (v < leu_bit_.size() && !leu_bit_[v].empty()) {
+    const auto& unavail = leu_bit_[v];
+    for (std::size_t i = 0; i < palette; ++i) {
+      const Color candidate =
+          static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
+      if (!unavail[candidate]) return candidate;
     }
+    return kUncolored;
+  }
+
+  // Fallback: build the unavailability set on the fly (used before leu_ is built).
+  thread_local std::vector<unsigned char> unavail;
+  thread_local std::vector<Color> touched;
+  if (unavail.size() < palette) unavail.assign(palette, 0);
+  touched.clear();
+
+  for (VertexId u : direct_neighbors(v)) {
+    if (is_active_vertex(u) || levels_[u] > levels_[v]) continue;
     const Color c = colors_[u];
-    if (color_in_palette_range(c)) {
-      unavailable[c] = 1;
+    if (color_in_palette_range(c) && !unavail[c]) {
+      unavail[c] = 1;
+      touched.push_back(c);
     }
   }
 
+  Color result = kUncolored;
   for (std::size_t i = 0; i < palette; ++i) {
     const Color candidate = static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
-    if (!unavailable[candidate]) {
-      return candidate;
+    if (!unavail[candidate]) {
+      result = candidate;
+      break;
     }
   }
-  return kUncolored;
+  for (Color c : touched) unavail[c] = 0;
+  return result;
 }
 
 bool ParExactEngine::proposal_conflicts_non_active_neighbors(
@@ -612,60 +689,81 @@ bool ParExactEngine::proposal_conflicts_active_neighbors(
 
 std::vector<VertexId> ParExactEngine::collect_unresolved_frontier_from_candidates(
     const std::vector<VertexId>& candidates) const {
-  std::vector<VertexId> unresolved;
-  unresolved.reserve(candidates.size());
+  const VertexId n = graph_.num_vertices();
   diagnostics_.direct_neighbor_scans += static_cast<std::uint64_t>(candidates.size());
-  for (VertexId v : candidates) {
-    if (v >= graph_.num_vertices()) {
-      continue;
-    }
-    bool conflicted = false;
+
+  // parlay::filter runs the predicate in parallel; result is already compacted.
+  parlay::sequence<VertexId> seq(candidates.begin(), candidates.end());
+  auto unresolved = parlay::filter(seq, [&](VertexId v) -> bool {
+    if (v >= n) return false;
+    const Color cv = colors_[v];
     for (VertexId u : direct_neighbors(v)) {
-      if (colors_[u] == colors_[v]) {
-        conflicted = true;
-        break;
-      }
+      if (colors_[u] == cv) return true;
     }
-    if (conflicted) {
-      unresolved.push_back(v);
-    }
-  }
-  return deduplicate_and_sort_vertices(unresolved);
+    return false;
+  });
+
+  // The filtered sequence preserves the original order (candidates are already
+  // sorted), so deduplicate_and_sort_vertices just removes any duplicates.
+  return deduplicate_and_sort_vertices(std::vector<VertexId>(unresolved.begin(), unresolved.end()));
 }
 
 Color ParExactEngine::sampled_level_aware_color(VertexId v, std::uint64_t round_index) const {
   const std::size_t palette = palette_size();
-  std::vector<unsigned char> unavailable(palette, 0);
-  for (VertexId u : direct_neighbors(v)) {
-    if (levels_[u] > levels_[v]) {
-      continue;
+  const Color offset = deterministic_color_offset(round_index, v, 0x7f4a7c15ULL);
+
+  // Fast path: use the pre-maintained LowerEqualUsed bitvector when available.
+  // In the token repair path, active vertices have colors_[v] = kUncolored, so
+  // they were already removed from leu_ and are correctly invisible here.
+  if (v < leu_bit_.size() && !leu_bit_[v].empty()) {
+    const auto& unavail = leu_bit_[v];
+    for (std::size_t i = 0; i < palette; ++i) {
+      const Color candidate =
+          static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
+      if (!unavail[candidate]) return candidate;
     }
+    return kUncolored;
+  }
+
+  // Fallback: build the unavailability set on the fly.
+  thread_local std::vector<unsigned char> unavail;
+  thread_local std::vector<Color> touched;
+  if (unavail.size() < palette) unavail.assign(palette, 0);
+  touched.clear();
+
+  for (VertexId u : direct_neighbors(v)) {
+    if (levels_[u] > levels_[v]) continue;
     const Color c = colors_[u];
-    if (color_in_palette_range(c)) {
-      unavailable[c] = 1;
+    if (color_in_palette_range(c) && !unavail[c]) {
+      unavail[c] = 1;
+      touched.push_back(c);
     }
   }
 
-  const Color offset = deterministic_color_offset(round_index, v, 0x7f4a7c15ULL);
+  Color result = kUncolored;
   for (std::size_t i = 0; i < palette; ++i) {
     const Color candidate = static_cast<Color>((static_cast<std::size_t>(offset) + i) % palette);
-    if (!unavailable[candidate]) {
-      return candidate;
+    if (!unavail[candidate]) {
+      result = candidate;
+      break;
     }
   }
-  return kUncolored;
+  for (Color c : touched) unavail[c] = 0;
+  return result;
 }
 
 bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& initial_active,
                                                  std::size_t* vertices_touched,
                                                  std::uint64_t* rounds_attempted) {
-  static constexpr std::size_t kSequentialThreshold = 128;
+  static constexpr std::size_t kSequentialThreshold = 512;
   std::vector<VertexId> active = deduplicate_and_sort_vertices(initial_active);
   if (active.empty()) {
     return true;
   }
   ++diagnostics_.repair_calls;
   ++diagnostics_.token_repair_calls;
+
+  const bool use_leu = !leu_.empty();
 
   bool used_sequential = false;
   for (std::uint32_t round = 0; round < max_rounds_ && !active.empty(); ++round) {
@@ -679,7 +777,12 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
     prepare_active_membership(active);
     for (VertexId v : active) {
       if (v < graph_.num_vertices()) {
+        const Color old_c = colors_[v];
         colors_[v] = kUncolored;
+        // Remove this vertex's old color from neighbors' leu_.
+        if (use_leu && old_c != kUncolored) {
+          update_leu_for_color_change(v, old_c, kUncolored);
+        }
       }
     }
 
@@ -786,6 +889,10 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
       timestamps_[v] = logical_time_;
       ++commit_count_;
       ++diagnostics_.token_safe_commits;
+      // Restore the new color in neighbors' leu_.
+      if (use_leu && c != kUncolored) {
+        update_leu_for_color_change(v, kUncolored, c);
+      }
 
       VertexId unique_higher_conflict = graph_.num_vertices();
       bool multiple_higher_conflicts = false;
@@ -817,24 +924,109 @@ bool ParExactEngine::attempt_token_recolor_batch(const std::vector<VertexId>& in
   return active.empty();
 }
 
+// ---------------------------------------------------------------------------
+// LowerEqualUsed maintenance
+// ---------------------------------------------------------------------------
+
+void ParExactEngine::rebuild_leu_all() {
+  const VertexId n = graph_.num_vertices();
+  const std::size_t palette = palette_size();
+
+  // Allocate / resize per-vertex arrays.
+  leu_.resize(n);
+  leu_bit_.resize(n);
+  parlay::parallel_for(0, n, [&](std::size_t v) {
+    leu_[v].assign(palette, 0);
+    leu_bit_[v].assign(palette, 0);
+  });
+
+  // For each vertex v, count the colors of its lower/equal-level neighbours.
+  parlay::parallel_for(0, n, [&](std::size_t v) {
+    for (VertexId u : direct_neighbors(v)) {
+      if (levels_[u] > levels_[v]) continue;
+      const Color c = colors_[u];
+      if (!color_in_palette_range(c)) continue;
+      if (leu_[v][c] < std::numeric_limits<std::uint16_t>::max()) {
+        ++leu_[v][c];
+      }
+      leu_bit_[v][c] = 1;
+    }
+  });
+}
+
+void ParExactEngine::update_leu_for_edge(VertexId u, VertexId v, bool inserted) {
+  const std::size_t palette = palette_size();
+  // Update leu_[v] based on u's color (if level[u] <= level[v]).
+  auto update_one = [&](VertexId target, VertexId source) {
+    if (levels_[source] > levels_[target]) return;
+    const Color c = colors_[source];
+    if (!color_in_palette_range(c)) return;
+    if (c >= palette) return;
+    if (inserted) {
+      if (leu_[target][c] < std::numeric_limits<std::uint16_t>::max()) {
+        ++leu_[target][c];
+      }
+      leu_bit_[target][c] = 1;
+    } else {
+      if (leu_[target][c] > 0) {
+        --leu_[target][c];
+        if (leu_[target][c] == 0) leu_bit_[target][c] = 0;
+      }
+    }
+  };
+  update_one(v, u);
+  update_one(u, v);
+}
+
+void ParExactEngine::update_leu_for_color_change(VertexId v, Color old_color,
+                                                  Color new_color) {
+  const std::size_t palette = palette_size();
+  // Propagate the color change of v to all equal/higher-level neighbours.
+  for (VertexId u : direct_neighbors(v)) {
+    if (levels_[v] > levels_[u]) continue;  // only update when level[v] <= level[u]
+    if (old_color != kUncolored && old_color < palette) {
+      if (leu_[u][old_color] > 0) {
+        --leu_[u][old_color];
+        if (leu_[u][old_color] == 0) leu_bit_[u][old_color] = 0;
+      }
+    }
+    if (new_color != kUncolored && new_color < palette) {
+      if (leu_[u][new_color] < std::numeric_limits<std::uint16_t>::max()) {
+        ++leu_[u][new_color];
+      }
+      leu_bit_[u][new_color] = 1;
+    }
+  }
+}
+
 Color ParExactEngine::greedy_color_for_vertex(VertexId v) const {
   const std::size_t palette = palette_size();
-  std::vector<unsigned char> unavailable(palette, 0);
+  thread_local std::vector<unsigned char> unavail;
+  thread_local std::vector<Color> touched;
+  if (unavail.size() < palette) unavail.assign(palette, 0);
+  touched.clear();
 
   for (VertexId u : direct_neighbors(v)) {
-    const Color neighbor_color = colors_[u];
-    if (neighbor_color != kUncolored && color_in_palette_range(neighbor_color)) {
-      unavailable[neighbor_color] = 1;
+    const Color c = colors_[u];
+    if (c != kUncolored && color_in_palette_range(c) && !unavail[c]) {
+      unavail[c] = 1;
+      touched.push_back(c);
     }
   }
 
+  Color result = kUncolored;
   for (Color c = 0; c <= graph_.delta_cap(); ++c) {
-    if (!unavailable[c]) {
-      return c;
+    if (!unavail[c]) {
+      result = c;
+      break;
     }
   }
+  for (Color c : touched) unavail[c] = 0;
 
-  throw std::runtime_error("no available color in [0, delta_cap] during par_exact greedy coloring");
+  if (result == kUncolored) {
+    throw std::runtime_error("no available color in [0, delta_cap] during par_exact greedy coloring");
+  }
+  return result;
 }
 
 const std::unordered_set<VertexId>& ParExactEngine::direct_neighbors(VertexId v) const {
@@ -847,6 +1039,10 @@ void ParExactEngine::recolor_all_greedy_exact() {
   }
   for (VertexId v = 0; v < graph_.num_vertices(); ++v) {
     colors_[v] = greedy_color_for_vertex(v);
+  }
+  // Fallback recoloring changes all colors; cheapest to rebuild leu_ from scratch.
+  if (!leu_.empty()) {
+    rebuild_leu_all();
   }
 }
 
