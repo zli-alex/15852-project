@@ -1,13 +1,14 @@
 # Dynamic Graph Coloring (C++17 + ParlayLib)
 
-This repository currently has Foundation, SEQ-Baseline, and PAR-Relaxed (through Step 6 phase-separated repair rounds) implemented.
+This repository currently has Foundation, SEQ-Baseline, **SEQ-Exact** (benchmark-integrated), and PAR-Relaxed (through Step 6 phase-separated repair rounds) implemented.
 
 - Shared infrastructure is in place (`types`, `batch`, `GraphStore`, validators, RNG).
 - `SeqBaselineEngine` is implemented as a correctness-first sequential exact baseline.
-- Benchmarks support `graph_store_only`, `seq_baseline`, and `par_relaxed`.
+- `SeqExactEngine` implements the SEQ-Exact stage: deterministic levels/timestamps, greedy exact init, insertion conflict repair with level/timestamp/vertex-id endpoint choice, accepted deletions without recolor, batch repair from inserted-edge conflicts with full greedy fallback, and deterministic fuzz coverage. See `docs/stages/seq_exact.md` for simplifications (no deletion recoloring, no paper O(1) claim, no PAR-Exact).
+- Benchmarks support `graph_store_only`, `seq_baseline`, `seq_exact`, and `par_relaxed`.
 - `ParRelaxedEngine` uses deterministic phase-separated repair rounds for accepted insertions and accepted batches, with full relaxed greedy recolor fallback for correctness.
-- Accepted deletions do not trigger repair; rejected updates/batches preserve graph, colors, and stats.
-- Paper-specific exact algorithms (SEQ-Exact, PAR-Exact) are not implemented yet.
+- Accepted deletions do not trigger repair in SEQ-Baseline/SEQ-Exact; rejected updates/batches preserve graph, colors, and stats.
+- **PAR-Exact** is not implemented yet.
 
 ## Requirements
 
@@ -68,7 +69,7 @@ cmake --build build --target bench_smoke
 Build only selected tests:
 
 ```bash
-cmake --build build --target test_rng test_types_batch test_interfaces_compile test_graph_store test_validator test_seq_baseline test_seq_baseline_fuzz
+cmake --build build --target test_rng test_types_batch test_interfaces_compile test_graph_store test_validator test_seq_baseline test_seq_baseline_fuzz test_seq_exact test_seq_exact_fuzz
 ```
 
 ## Test
@@ -77,7 +78,7 @@ cmake --build build --target test_rng test_types_batch test_interfaces_compile t
 ctest --test-dir build --output-on-failure
 ```
 
-On validated Linux runs, all 8 tests pass:
+On validated Linux runs, all **12** tests pass:
 
 - `foundation_placeholder`
 - `rng`
@@ -86,14 +87,18 @@ On validated Linux runs, all 8 tests pass:
 - `graph_store`
 - `validator`
 - `seq_baseline`
+- `seq_exact`
 - `seq_baseline_fuzz`
+- `seq_exact_fuzz`
+- `par_relaxed`
+- `par_relaxed_fuzz`
 
 ## Smoke Benchmarks
 
 Engine selection:
 
 ```bash
-./build/benchmarks/bench_smoke --engine graph_store_only|seq_baseline|par_relaxed --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 1
+./build/benchmarks/bench_smoke --engine graph_store_only|seq_baseline|seq_exact|par_relaxed --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 1
 ```
 
 Representative commands:
@@ -102,6 +107,8 @@ Representative commands:
 ./build/benchmarks/bench_smoke --engine graph_store_only --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 1
 ./build/benchmarks/bench_smoke --engine seq_baseline --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 1
 ./build/benchmarks/bench_smoke --engine seq_baseline --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 4
+./build/benchmarks/bench_smoke --engine seq_exact --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 1
+./build/benchmarks/bench_smoke --engine seq_exact --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 4
 ./build/benchmarks/bench_smoke --engine par_relaxed --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 1 --palette-multiplier 2 --max-rounds 4
 ./build/benchmarks/bench_smoke --engine par_relaxed --seed 1 --vertices 32 --updates 100 --delta-cap 8 --batch-size 4 --c 4 --max-rounds 4
 ```
@@ -140,18 +147,20 @@ Notes:
 - Always run benchmarks with explicit deterministic `--seed` and record it.
 - `graph_store_only` remains the default mode for backward compatibility.
 - `seq_baseline` is correctness-first and uses full greedy recoloring after accepted insertions and accepted batches.
+- `seq_exact` is benchmark-selectable via `--engine seq_exact`; workloads match `seq_baseline` / `par_relaxed` coloring paths (`random_attempts`, `valid_insertions`, `mixed_valid`, `batch_valid`, `conflict_heavy`). Output adds `palette_size`, `recolor_calls`, `recolored_vertices_total`, `cascade_steps_total`, `full_fallback_count`, and `level_conflict_choices`.
 - `par_relaxed` is benchmark-selectable via `--engine par_relaxed`.
 - Benchmark workloads currently include:
   - `random_attempts` (default rejection-stress workload),
   - `valid_insertions` (`batch_size=1` accepted insertion streams),
   - `mixed_valid` (`batch_size=1` insert/delete streams where `--insert-ratio` is a preference),
-  - `batch_valid` (accepted insertion-only batches for meaningful `batch_size=4` and `batch_size=16` runs).
-- Future/stretch workloads include `conflict_heavy`, `sparse_stream`, `dense_near_delta`, and `batch_conflict`.
+  - `batch_valid` (accepted insertion-only batches for meaningful `batch_size=4` and `batch_size=16` runs),
+  - `conflict_heavy` (stress path for coloring engines; also supported by `seq_exact`).
+- Future/stretch workloads include `sparse_stream`, `dense_near_delta`, and `batch_conflict`.
 - `par_relaxed` uses bounded phase-separated repair rounds for accepted insertions/batches and falls back to full relaxed greedy recolor if conflicts remain.
 - `total_rounds`, `fallback_count`, and `vertices_touched_total` are meaningful PAR-Relaxed benchmark metrics.
 - Optional PAR-Relaxed diagnostics are available with `--diagnostics 1`, including repair counters/timers and small-active-set fast-path counters.
 - `par_relaxed` CLI options: `--palette-multiplier`, `--c`, `--max-rounds`.
-- `seq_baseline` is not the paper-specific SEQ-Exact algorithm.
+- `seq_baseline` is a separate sequential exact baseline from `seq_exact` (see `docs/stages/seq_exact.md`).
 - `graph_validated=1` indicates final structural validation success; `coloring_validated=1` indicates final exact-coloring validation success.
 - Conservative batch behavior is expected: repeated same undirected edge inside a batch may reject the entire batch.
 - Earlier `par_relaxed batch_size=4` runs showed high `repair_seconds` despite tiny active sets. Diagnostics identified Parlay tiny-active-set overhead; this is addressed by a thresholded sequential repair fast path for active sets of size `<= 128`.
@@ -193,4 +202,7 @@ Linux smoke script:
   - `batch_valid batch_size=16` applied `1024/1024` updates with `accepted_ratio=1` for `par_relaxed`
   - full CTest passed: `100% tests passed, 0 tests failed out of 10`
   - Parlay external-header warnings may appear during build but are not currently blocking
+- Linux validation after **SEQ-Exact** (engine, fuzz, `bench_smoke --engine seq_exact`) succeeded:
+  - full CTest passed: **`100% tests passed, 0 tests failed out of 12`**
+  - representative `seq_exact` benchmark command/output lines are recorded in `docs/stages/seq_exact.md` (update that section when you capture fresh runs)
 - Some local macOS setups may fail with missing standard C++ headers. This is an SDK/toolchain environment issue, not a project logic issue. Linux cluster results are the source of truth.

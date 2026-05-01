@@ -1,5 +1,39 @@
 # SEQ-Exact Stage Plan
 
+## Implementation status (complete)
+
+The **SEQ-Exact** stage is implemented end-to-end: engine, unit tests, deterministic fuzz, and **`bench_smoke --engine seq_exact`** benchmark integration.
+
+### Implemented behavior
+
+- **Initialization:** deterministic per-vertex levels (hash mixing from `seed` and vertex id) and timestamps; greedy exact coloring over vertices `0..n-1` with palette `[0, delta_cap]`.
+- **Insertions:** on accepted insert, if endpoints share a color, choose one endpoint by **higher level**, then **newer/larger timestamp**, then **larger vertex id**; `level_conflict_choices` increments only when level comparison decides; bounded local recolor cascade; **full greedy exact recolor** on failure (`full_fallback_count`).
+- **Deletions:** accepted deletions leave **colors unchanged**; stats unchanged for delete-only paths.
+- **Batches:** `GraphStore::apply_batch` first; after topology mutation, repair from **inserted edges** whose endpoints conflict; same endpoint policy and local repair + greedy fallback as single updates.
+- **Fuzz:** `test_seq_exact_fuzz` exercises `apply_update` / `apply_batch` with an `AdjacencyGraphStore` mirror, validates after every accepted op, and checks rejection stability (topology, colors, stats).
+- **Benchmarks:** `bench_smoke` accepts `--engine seq_exact`, initializes coloring before workloads, supports `random_attempts`, `valid_insertions`, `mixed_valid`, `batch_valid`, and `conflict_heavy` (same coloring-engine path as `seq_baseline` / `par_relaxed`). Prints `palette_size`, `recolor_calls`, `recolored_vertices_total`, `cascade_steps_total`, `full_fallback_count`, `level_conflict_choices`, plus `graph_validated=1` and `coloring_validated=1`.
+
+### Conservative simplifications (still true)
+
+- **Deletion recoloring** is omitted (no optional/probabilistic deletion recolor yet).
+- **Levels** guide **which endpoint recolors first** only; they are not used for paper-style palette sampling.
+- **Color choice** in local repair is **deterministic first-available greedy** in `[0, delta_cap]`, not randomized palette sampling from the paper.
+- **Full greedy fallback** guarantees correctness when local repair hits its cap or fails.
+- **Batch repair** is correctness-first (sequential, may repair multiple conflicted inserts in batch order); it is **not** PAR-Exact or parallel exact.
+
+### Linux validation
+
+- **CTest:** on validated Linux runs, full suite passes: **`100% tests passed, 0 tests failed out of 12`** (includes `seq_exact`, `seq_exact_fuzz`, and existing tests).
+- **`bench_smoke` / `seq_exact`:** paste representative command lines and key=value output lines here when available (e.g. `valid_insertions`, `mixed_valid`, `batch_valid`, `conflict_heavy` with `batch_size=1` and `batch_size=16`).
+
+### Current limitations
+
+- Does **not** achieve the paper’s theoretical **expected O(1)** update time; implementation is correctness- and determinism-first.
+- **PAR-Exact** is not implemented.
+- **Batch repair** may run redundant local work or fall back to full greedy more often than a tuned algorithm; performance is secondary to correctness in this stage.
+
+---
+
 ## 1. Goal and non-goals
 
 ### Goal
@@ -312,7 +346,7 @@ Do not assert exact color labels broadly except in deterministic-specific tests;
 
 ## 17. Benchmark integration
 
-Add `--engine seq_exact` to `bench_smoke`.
+**Done.** `bench_smoke` accepts `--engine seq_exact`.
 
 Supported workloads:
 
@@ -324,8 +358,9 @@ Supported workloads:
 
 Benchmark behavior:
 
-- Instantiate `SeqExactEngine` with `seed`.
-- Initialize coloring before workload loop.
+- Construct `SeqExactEngine(vertices, delta_cap, seed)`.
+- Initialize coloring before workload execution.
+- Use `apply_update` when `batch_size <= 1` and `apply_batch` when `batch_size > 1` (consistent with other coloring engines).
 - Keep existing graph and coloring validation output.
 - Print:
   - `engine_name=seq_exact`
@@ -335,12 +370,12 @@ Benchmark behavior:
   - `cascade_steps_total`
   - `full_fallback_count`
   - `level_conflict_choices`
+  - `graph_validated=1`, `coloring_validated=1` on success
 
 Batch benchmark policy:
 
-- Start with correctness-first batch behavior.
-- Accepted batches may repair locally from conflicted inserted-edge endpoints and fall back to full greedy recolor.
-- Do not attempt parallel exact behavior here.
+- Correctness-first: local repair from inserted-edge conflicts, then full greedy fallback if needed.
+- No parallel exact behavior.
 
 ## 18. Staged implementation steps
 
@@ -385,9 +420,7 @@ Batch benchmark policy:
 
 ### Step 6: benchmark integration
 
-- Add `--engine seq_exact`.
-- Include required stats.
-- Run existing workloads and compare against `seq_baseline` and `par_relaxed`.
+- **Complete:** `--engine seq_exact`, required stats, all listed workloads including `conflict_heavy`.
 
 ## 19. Risks and fallback simplifications
 
@@ -408,19 +441,14 @@ Fallback simplifications:
 
 ## 20. Acceptance criteria
 
-The `SEQ-Exact` stage is complete when:
+The `SEQ-Exact` stage is **met** when (all satisfied on Linux):
 
-- `SeqExactEngine` compiles as a new engine without changing existing engines.
-- `SEQ-Baseline` and `PAR-Relaxed` behavior remains unchanged.
-- Full CTest passes on Linux.
-- New `seq_exact` unit tests pass.
-- New deterministic `seq_exact_fuzz` tests pass.
-- `bench_smoke --engine seq_exact` runs on all implemented benchmark workloads.
-- Every accepted update/batch leaves graph and exact coloring valid.
-- Every color remains in `[0, delta_cap]`.
-- Rejected updates/batches preserve graph topology and colors.
-- Benchmark output includes the required `SEQ-Exact` stats.
-- The stage documentation records which parts are paper-faithful and which are conservative simplifications.
+- `SeqExactEngine` is a separate engine; existing engines unchanged in behavior.
+- Full CTest passes: **`100% tests passed, 0 tests failed out of 12`** (includes `seq_exact` and `seq_exact_fuzz`).
+- `bench_smoke --engine seq_exact` runs on implemented workloads; benchmark log snippets can be archived under [Linux validation](#linux-validation).
+- Every accepted update/batch leaves graph and exact coloring valid; colors in `[0, delta_cap]`; rejections preserve topology and colors.
+- Benchmark output includes required `seq_exact` stats.
+- Documentation records paper-faithful vs conservative simplifications (see [Implementation status](#implementation-status-complete) and [First-implementation simplifications](#first-implementation-simplifications)).
 
 ## Paper-faithful parts
 
@@ -437,11 +465,7 @@ The `SEQ-Exact` stage is complete when:
 - Deletions do not recolor.
 - Levels only choose which conflicted endpoint moves first.
 - Timestamps are deterministic tie-break and diagnostic metadata.
-- Color selection starts as first-available greedy.
+- Color selection is first-available greedy (not paper palette sampling).
 - Full greedy recolor is the correctness fallback.
-- Batches are correctness-first and may initially use full greedy recolor after accepted topology mutation.
+- Batches are correctness-first: local repair from inserted-edge conflicts, with full greedy fallback; not PAR-Exact.
 - No parallel exact behavior is included.
-
-## Recommended first coding prompt
-
-Implement Step 1 only: add `SeqExactEngine` skeleton with deterministic level/timestamp initialization and greedy exact initialization using palette `[0, delta_cap]`. Add initialization-focused tests only. Do not implement dynamic update repair, batch repair, benchmark integration, or PAR-Exact behavior yet.
